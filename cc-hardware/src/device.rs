@@ -1,3 +1,5 @@
+use esp_println::println;
+
 use crate::can::{send_can_message, DEVICE_ID, DEVICE_TYPE};
 use crate::config::{self, config};
 use crate::error::{Component, ErrorCode, ErrorReport, Severity};
@@ -79,6 +81,7 @@ impl Device {
     pub async fn id_type(&mut self, _id: CanId, data: &[u8], _remote_request: bool) -> Option<()> {
         //temporary disabled because gateway issues
         //if self.uid0 == self.mac && self.uid1 == self.mac {
+        println!("set id and type");
         let (id, dtype) = IdTypeMsg::parse(data)?;
         self.id = id;
         self.dtype = dtype;
@@ -88,9 +91,8 @@ impl Device {
         config.set_u8(config::Key::DeviceType, dtype).await.ok()?;
         *DEVICE_ID.lock().await = id;
         *DEVICE_TYPE.lock().await = dtype;
-        esp_hal::system::software_reset();
-        //}
         Some(())
+        //}
     }
 
     pub async fn uid0(&mut self, _id: CanId, data: &[u8], remote_request: bool) {
@@ -101,6 +103,7 @@ impl Device {
             let mut buf = [0u8; 8];
             buf.copy_from_slice(data);
             self.uid0 = u64::from_le_bytes(buf);
+            println!("set uid0 to {}", self.uid0);
         }
     }
 
@@ -112,6 +115,7 @@ impl Device {
             let mut buf = [0u8; 8];
             buf.copy_from_slice(data);
             self.uid1 = u64::from_le_bytes(buf);
+            println!("set uid1 to {}", self.uid1);
         }
     }
 
@@ -131,7 +135,6 @@ impl Device {
             if data.len() == 1 {
                 let mut config = config().await;
                 config.set_u8(key, data[0]).await.ok()?;
-                esp_hal::system::software_reset();
             } else {
                 ErrorReport::send(
                     Component::Device,
@@ -161,6 +164,7 @@ impl Device {
             data[..len].copy_from_slice(&string[..len]);
             send_can_message(CanMessageType::CustomString, &data, false).await;
         } else {
+            println!("set custom string");
             let s = core::str::from_utf8(data).ok()?;
             self.custom_string.clear();
             self.custom_string.push_str(s).ok()?;
@@ -181,11 +185,11 @@ impl Device {
         buf[..version_bytes.len().min(8)]
             .copy_from_slice(&version_bytes[..version_bytes.len().min(8)]);
 
-        send_can_message(CanMessageType::ApplicationVersion, &buf, false).await;
+        send_can_message(CanMessageType::ApplicationVersionString, &buf, false).await;
     }
-    pub async fn restart(&mut self, _id: CanId, _data: &[u8], remote_request: bool) {
-        if !remote_request {
-            esp_hal::system::software_reset();
+    pub async fn restart(&mut self, _id: CanId, data: &[u8], remote_request: bool) {
+        if !remote_request && data.len() == 1 && data[0] == 1 {
+            //esp_hal::system::software_reset();
         }
     }
 }

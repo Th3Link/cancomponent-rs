@@ -16,7 +16,7 @@ use esp_hal::Async;
 use esp_println::println;
 use static_cell::StaticCell;
 
-pub static CAN_CHANNEL: Channel<CriticalSectionRawMutex, EspTwaiFrame, 8> = Channel::new();
+pub static CAN_CHANNEL: Channel<CriticalSectionRawMutex, EspTwaiFrame, 32> = Channel::new();
 static TWAI_RX: StaticCell<TwaiRx<'_, Async>> = StaticCell::new();
 static TWAI_TX: StaticCell<TwaiTx<'_, Async>> = StaticCell::new();
 
@@ -28,9 +28,9 @@ pub fn make_filter(device_type: u8, device_id: u8) -> DualExtendedFilter {
 
     let full_id = ((is_ng as u32) << 28)
         | ((device_type as u32 & 0x3F) << 16)
-        | ((device_id as u32 & 0xE) << 8); // nur oberste 3 Bit von device_id
+        | ((device_id as u32 & 0xFF) << 8); // nur oberste 3 Bit von device_id
 
-    let full_mask = (1 << 28) | (0x3F << 16) | (0x7 << 13);
+    let full_mask = 0x103FFF00;
 
     let code1 = ((full_id >> 13) & 0xFFFF) as u16;
     let mask1 = ((full_mask >> 13) & 0xFFFF) as u16;
@@ -38,7 +38,7 @@ pub fn make_filter(device_type: u8, device_id: u8) -> DualExtendedFilter {
     let full_id2 = (is_ng as u32) << 28;
 
     let code2 = ((full_id2 >> 13) & 0xFFFF) as u16;
-
+    println!("{code1:#x} {code2:#x} {mask1:#x} ");
     DualExtendedFilter::new_from_code_mask([code1, code2], [mask1, mask1])
 }
 
@@ -66,24 +66,17 @@ pub async fn init(
     let filter = make_filter(device_type, device_id);
     twai_config.set_filter(filter);
     let twai = twai_config.into_async().start();
+    while twai.is_bus_off() {
+        println!("waiting for bus_off");
+        embassy_time::Timer::after_millis(100).await;
+    }
     let (rx, tx) = twai.split();
 
     let rx = TWAI_RX.init(rx);
     let tx = TWAI_TX.init(tx);
 
-    spawner.spawn(can_recieve_task(rx)).unwrap();
-
     spawner.spawn(can_send_task(tx)).unwrap();
-
-    let id = CanId::new(
-        *DEVICE_TYPE.lock().await,
-        *DEVICE_ID.lock().await,
-        CanMessageType::Available,
-    );
-    let ext_id: embedded_can::ExtendedId = id.into();
-    let esp_ext_id: esp_hal::twai::ExtendedId = ext_id.into();
-    let message = EspTwaiFrame::new(esp_ext_id, &[1u8]).unwrap();
-    CAN_CHANNEL.send(message).await;
+    spawner.spawn(can_recieve_task(rx)).unwrap();
 }
 
 // Typ für die CAN-Handler-Funktion
@@ -100,6 +93,7 @@ pub async fn dispatch(frame: &EspTwaiFrame) {
         return;
     }
 
+    println!("recv: {frame:?}");
     match id.msg_type {
         CanMessageType::Relais => relais_handler(id, frame.data(), frame.is_remote_frame()).await,
         CanMessageType::Rollershutter => {
@@ -218,7 +212,13 @@ pub async fn dispatch(frame: &EspTwaiFrame) {
         CanMessageType::FlashWrite => {
             update()
                 .await
-                .write(id, frame.data(), frame.is_remote_frame())
+                .write(id, frame.data(), frame.is_remote_frame(), false)
+                .await
+        }
+        CanMessageType::FlashComplete => {
+            update()
+                .await
+                .write(id, frame.data(), frame.is_remote_frame(), true)
                 .await
         }
         CanMessageType::FlashVerify => {
@@ -254,7 +254,7 @@ async fn unknown_handler(frame: &EspTwaiFrame) {
             return;
         }
     };
-    println!("Unknown msg ID {:#?}, payload: {:?}", id, frame.data());
+    //println!("Unknown msg ID {:#x}, payload: {:?}", id, frame.data());
 }
 
 pub async fn send_can_message(msg_id: CanMessageType, data: &[u8], rtr: bool) {
@@ -278,8 +278,9 @@ pub async fn can_recieve_task(rx: &'static mut TwaiRx<'static, Async>) {
     println!("can_recieve_task started");
     loop {
         if let Ok(frame) = rx.receive_async().await {
-            println!("can_receive_task:{frame:?}");
             dispatch(&frame).await;
+        } else {
+            println!("some error..");
         }
     }
 }
@@ -289,7 +290,12 @@ pub async fn can_send_task(tx: &'static mut TwaiTx<'static, Async>) {
     println!("can_send_task started");
     loop {
         let frame = CAN_CHANNEL.receive().await;
-        println!("can_send_task:{frame:?}");
-        tx.transmit_async(&frame).await.unwrap();
+        println!("send: {frame:?}");
+        //while (tx.transmit(&frame).inspect_err(|e| println!("{e:?}")).ok();
+        tx.transmit_async(&frame)
+            .await
+            .inspect_err(|e| println!("{e:?}"))
+            .unwrap();
+        println!("sent: {frame:?}");
     }
 }

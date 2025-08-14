@@ -23,6 +23,25 @@ pub enum Key {
     HardwareRevision = 7,
 }
 
+#[repr(u8)]
+#[derive(Copy, Clone)]
+pub enum DeviceType {
+    Button = 4,
+    Relais = 5,
+    Unknown = 255,
+}
+
+impl From<u8> for DeviceType {
+    fn from(value: u8) -> Self {
+        use DeviceType::*;
+        match value {
+            4 => Button,
+            5 => Relais,
+            _ => Unknown,
+        }
+    }
+}
+
 pub async fn init() {
     let mut config_guard = CONFIG.lock().await;
 

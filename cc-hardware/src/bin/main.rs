@@ -1,13 +1,17 @@
 #![no_std]
 #![no_main]
 
+use cancomponents::button::Button;
 use cancomponents::can;
 use cancomponents::config;
+use cancomponents::config::config;
+use cancomponents::config::DeviceType;
 use cancomponents::device;
 use cancomponents::extension::Extension;
 use cancomponents::extension::ExtensionType;
 use cancomponents::relais::Relais;
 use cancomponents::update;
+use cancomponents_core::can_message_type::CanMessageType;
 use embassy_executor::Spawner;
 use embassy_time::Duration;
 use embassy_time::Timer;
@@ -25,7 +29,7 @@ async fn main(spawner: Spawner) -> ! {
 
     config::init().await;
     device::init().await;
-    update::init().await;
+    update::init(&spawner).await;
 
     can::init(
         peripherals.TWAI0,
@@ -34,23 +38,54 @@ async fn main(spawner: Spawner) -> ! {
         &spawner,
     )
     .await;
-
-    Relais::init(
-        peripherals.I2C0,
-        peripherals.GPIO21,
-        peripherals.GPIO19,
-        &spawner,
-    );
-
-    Extension::init(
-        ExtensionType::GpioInput4,
+    /*
+        match DeviceType::from(
+            config()
+                .await
+                .get_u8(config::Key::DeviceType)
+                .await
+                .unwrap(),
+        ) {
+            DeviceType::Relais => {
+                Relais::init(
+                    peripherals.I2C0,
+                    peripherals.GPIO21,
+                    peripherals.GPIO19,
+                    &spawner,
+                );
+            }
+            DeviceType::Button => {}
+            _ => Button::init(
+                peripherals.GPIO33,
+                peripherals.GPIO35,
+                peripherals.GPIO12,
+                peripherals.GPIO34,
+                peripherals.IO_MUX,
+            ),
+        }
+    */
+    Button::init(
+        peripherals.GPIO25,
+        peripherals.GPIO26,
+        peripherals.GPIO5,
         peripherals.GPIO15,
-        peripherals.GPIO16,
-        peripherals.GPIO17,
-        peripherals.GPIO18,
+        peripherals.IO_MUX,
         &spawner,
     );
-
+    let data = [1];
+    can::send_can_message(CanMessageType::Available, &data, false).await;
+    can::send_can_message(CanMessageType::Available, &data, false).await;
+    can::send_can_message(CanMessageType::Available, &data, false).await;
+    /*
+        Extension::init(
+            ExtensionType::GpioInput4,
+            peripherals.GPIO15,
+            peripherals.GPIO16,
+            peripherals.GPIO17,
+            peripherals.GPIO18,
+            &spawner,
+        );
+    */
     loop {
         // let frame = block!(twai.receive()).unwrap();
         // println!("Bla");

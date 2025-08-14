@@ -1,11 +1,22 @@
-use cancomponents_core::can_id::CanId;
 use crate::error::{Component, ErrorCode, ErrorReport, Severity};
+use cancomponents_core::can_id::CanId;
+use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::Channel;
 use embassy_sync::mutex::Mutex;
 use esp_hal_ota::Ota;
+use esp_println::println;
 use esp_storage::FlashStorage;
+use heapless::Vec;
 
+// Buffer-Größe als Konstanto
+const OTA_BUFFER_SIZE: usize = 4096;
+
+static WRITE_QUEUE: Channel<CriticalSectionRawMutex, Vec<u8, OTA_BUFFER_SIZE>, 2> = Channel::new();
+static CURRENT_BUFFER: Mutex<CriticalSectionRawMutex, Vec<u8, OTA_BUFFER_SIZE>> =
+    Mutex::new(Vec::new());
 static UPDATE: Mutex<CriticalSectionRawMutex, Option<Update>> = Mutex::new(None);
+static OTA: Mutex<CriticalSectionRawMutex, Option<Ota<FlashStorage>>> = Mutex::new(None);
 
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -30,13 +41,15 @@ impl From<u8> for UpdateErrorCode {
         }
     }
 }
-pub async fn init() {
+pub async fn init(spawner: &Spawner) {
     let mut update_guard = UPDATE.lock().await;
 
     if update_guard.is_none() {
-        let update = Update { ota: None };
+        let update = Update {};
         *update_guard = Some(update);
     }
+
+    spawner.spawn(ota_writer_task()).unwrap();
 }
 
 pub async fn update(
@@ -45,9 +58,7 @@ pub async fn update(
     embassy_sync::mutex::MutexGuard::map(guard, |opt| opt.as_mut().expect("Update not initialized"))
 }
 
-pub struct Update {
-    ota: Option<Ota<FlashStorage>>,
-}
+pub struct Update {}
 
 impl Update {
     pub async fn start(&mut self, id: CanId, data: &[u8], _remote_request: bool) {
@@ -63,13 +74,16 @@ impl Update {
             return;
         }
 
-        let size = u32::from_le_bytes(data[0..4].try_into().unwrap());
-        let crc = u32::from_le_bytes(data[4..8].try_into().unwrap());
+        let size = u32::from_be_bytes(data[4..8].try_into().unwrap());
+        let crc = u32::from_be_bytes(data[0..4].try_into().unwrap());
+        println!("start update: crc {crc} size {size}");
 
         match Ota::new(FlashStorage::new()) {
             Ok(mut ota) => {
                 if ota.ota_begin(size, crc).is_ok() {
-                    self.ota = Some(ota);
+                    let next_ota = ota.get_next_ota_partition();
+                    println!("next ota part: {next_ota:?}");
+                    *OTA.lock().await = Some(ota);
                 } else {
                     // ota_begin fehlgeschlagen
                     ErrorReport::send(
@@ -80,7 +94,7 @@ impl Update {
                         &[0u8, 0u8, 0u8],
                     )
                     .await;
-                    self.ota = None;
+                    *OTA.lock().await = None;
                 }
             }
             Err(_) => {
@@ -93,46 +107,29 @@ impl Update {
                 )
                 .await;
                 // OTA-Initialisierung fehlgeschlagen
-                self.ota = None;
+                *OTA.lock().await = None;
             }
         }
     }
-
-    pub async fn write(&mut self, _id: CanId, data: &[u8], _remote_request: bool) {
-        if let Some(ota) = self.ota.as_mut() {
-            match ota.ota_write_chunk(data) {
-                Ok(true) => {
-                    // Letzter Chunk – flush und reboot
-                    if ota.ota_flush(true, true).is_ok() {
-                        esp_hal::system::software_reset();
-                    }
-                }
-                Ok(false) => {
-                    // Weiter schreiben
-                }
-                Err(_) => {
-                    ErrorReport::send(
-                        Component::Ota,
-                        ErrorCode::Unknown,
-                        Severity::RecoverableError,
-                        UpdateErrorCode::Write as u8,
-                        &[0u8, 0u8, 0u8],
-                    )
-                    .await;
-                    // Fehler beim Schreiben
-                    self.ota = None;
-                }
+    pub async fn write(
+        &mut self,
+        _id: CanId,
+        data: &[u8],
+        _remote_request: bool,
+        force_flush: bool,
+    ) {
+        let mut buffer = CURRENT_BUFFER.lock().await;
+        let should_flush = {
+            if buffer.extend_from_slice(data).is_err() {
+                true // Buffer voll -> sofort flushen
+            } else {
+                force_flush || buffer.len() == OTA_BUFFER_SIZE
             }
-        } else {
-            ErrorReport::send(
-                Component::Ota,
-                ErrorCode::Unknown,
-                Severity::RecoverableError,
-                UpdateErrorCode::NotStarted as u8,
-                &[0u8, 0u8, 0u8],
-            )
-            .await;
-            // OTA nicht gestartet
+        };
+
+        if should_flush {
+            WRITE_QUEUE.send(buffer.clone()).await;
+            buffer.clear();
         }
     }
 
@@ -141,4 +138,35 @@ impl Update {
     pub async fn erase(&mut self, _id: CanId, _data: &[u8], _remote_request: bool) {}
     pub async fn read(&mut self, _id: CanId, _data: &[u8], _remote_request: bool) {}
     pub async fn verify(&mut self, _id: CanId, _data: &[u8], _remote_request: bool) {}
+}
+
+#[embassy_executor::task]
+async fn ota_writer_task() {
+    let receiver = WRITE_QUEUE.receiver();
+    loop {
+        let data = receiver.receive().await;
+        let mut ota_guard = OTA.lock().await;
+        if let Some(ref mut ota) = *ota_guard {
+            match ota.ota_write_chunk(&*data) {
+                Ok(true) => {
+                    println!("last chunk");
+                    ota.ota_flush(true, true).unwrap();
+                }
+                Ok(false) => {
+                    // continue writing
+                }
+                Err(e) => {
+                    println!("Write failed: {:?}", e);
+                    ErrorReport::send(
+                        Component::Ota,
+                        ErrorCode::Unknown,
+                        Severity::RecoverableError,
+                        UpdateErrorCode::Write as u8,
+                        &[0u8, 0u8, 0u8],
+                    )
+                    .await;
+                }
+            }
+        }
+    }
 }
