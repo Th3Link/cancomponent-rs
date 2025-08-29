@@ -4,7 +4,7 @@ use heapless::{Entry, FnvIndexMap};
 
 const ZERO: Duration = Duration::from_millis(0);
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct ActiveRelais {
     pub current: RelaisState,
     pub scheduled: Option<(Instant, RelaisState)>,
@@ -26,7 +26,7 @@ impl ActiveRelais {
     }
 
     pub fn poll(&mut self, now: Instant) -> Option<RelaisState> {
-        if let Some((when, action)) = self.scheduled {
+        if let Some((when, action)) = self.scheduled.clone() {
             if now >= when {
                 self.scheduled = None;
                 return Some(action);
@@ -40,6 +40,12 @@ pub struct RelayManager<const N: usize> {
     relays: FnvIndexMap<usize, ActiveRelais, N>,
 }
 
+impl<const N: usize> Default for RelayManager<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<const N: usize> RelayManager<N> {
     pub fn new() -> Self {
         Self {
@@ -50,7 +56,11 @@ impl<const N: usize> RelayManager<N> {
     pub fn next_timeout(&self, now: Instant) -> Duration {
         self.relays
             .values()
-            .filter_map(|r| r.scheduled.map(|(t, _)| t.saturating_duration_since(now)))
+            .filter_map(|r| {
+                r.scheduled
+                    .clone()
+                    .map(|(t, _)| t.saturating_duration_since(now))
+            })
             .min()
             .unwrap_or(Duration::from_millis(100))
     }
@@ -58,7 +68,7 @@ impl<const N: usize> RelayManager<N> {
     pub fn apply_command(
         &mut self,
         num: usize,
-        state: RelaisState,
+        state: &RelaisState,
         duration: embassy_time::Duration,
         now: Instant,
     ) -> bool {
@@ -67,15 +77,15 @@ impl<const N: usize> RelayManager<N> {
         match self.relays.entry(num) {
             Entry::Occupied(mut entry) => {
                 let relay = entry.get_mut();
-                changed = relay.current != state || duration != ZERO;
-                relay.update(now, state, duration);
+                changed = &relay.current != state || duration != ZERO;
+                relay.update(now, state.clone(), duration);
             }
             Entry::Vacant(entry) => {
                 let mut relay = ActiveRelais {
                     current: RelaisState::Off,
                     scheduled: None,
                 };
-                relay.update(now, state, duration);
+                relay.update(now, state.clone(), duration);
                 entry.insert(relay).unwrap();
                 changed = true;
             }

@@ -2,54 +2,40 @@ use crate::error::{Component, ErrorCode, ErrorReport, Severity};
 use cancomponents_core::can_id::CanId;
 use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel::Channel;
 use embassy_sync::mutex::Mutex;
 use esp_hal_ota::Ota;
 use esp_println::println;
 use esp_storage::FlashStorage;
 use heapless::Vec;
+use num_enum::FromPrimitive;
 
 // Buffer-Größe als Konstanto
 const OTA_BUFFER_SIZE: usize = 4096;
-
-static WRITE_QUEUE: Channel<CriticalSectionRawMutex, Vec<u8, OTA_BUFFER_SIZE>, 2> = Channel::new();
 static CURRENT_BUFFER: Mutex<CriticalSectionRawMutex, Vec<u8, OTA_BUFFER_SIZE>> =
     Mutex::new(Vec::new());
 static UPDATE: Mutex<CriticalSectionRawMutex, Option<Update>> = Mutex::new(None);
 static OTA: Mutex<CriticalSectionRawMutex, Option<Ota<FlashStorage>>> = Mutex::new(None);
 
 #[repr(u8)]
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, FromPrimitive)]
 pub enum UpdateErrorCode {
+    #[num_enum(default)]
     Unknown = 0,
     InvalidData = 1,
     Begin = 2,
     Init = 3,
     Write = 4,
     NotStarted = 5,
+    VerifyFailed = 6,
 }
 
-impl From<u8> for UpdateErrorCode {
-    fn from(value: u8) -> Self {
-        match value {
-            1 => UpdateErrorCode::InvalidData,
-            2 => UpdateErrorCode::Begin,
-            3 => UpdateErrorCode::Init,
-            4 => UpdateErrorCode::Write,
-            5 => UpdateErrorCode::NotStarted,
-            _ => UpdateErrorCode::Unknown,
-        }
-    }
-}
-pub async fn init(spawner: &Spawner) {
+pub async fn init(_spawner: &Spawner) {
     let mut update_guard = UPDATE.lock().await;
 
     if update_guard.is_none() {
         let update = Update {};
         *update_guard = Some(update);
     }
-
-    spawner.spawn(ota_writer_task()).unwrap();
 }
 
 pub async fn update(
@@ -128,7 +114,48 @@ impl Update {
         };
 
         if should_flush {
-            WRITE_QUEUE.send(buffer.clone()).await;
+            println!("write chunk");
+            let mut ota_guard = OTA.lock().await;
+            if let Some(ref mut ota) = *ota_guard {
+                match ota.ota_write_chunk(&buffer) {
+                    Ok(true) => {
+                        println!("last chunk");
+                        if ota
+                            .ota_flush(true, true)
+                            .inspect_err(|e| {
+                                println!("{e:?}");
+                            })
+                            .is_err()
+                        {
+                            ErrorReport::send(
+                                Component::Update,
+                                ErrorCode::InvalidData,
+                                Severity::Warning,
+                                UpdateErrorCode::VerifyFailed as u8,
+                                &[0u8, 0u8, 0u8],
+                            )
+                            .await;
+                        } else {
+                            esp_hal::system::software_reset();
+                        }
+                    }
+                    Ok(false) => {
+                        // continue writing
+                    }
+                    Err(e) => {
+                        println!("Write failed: {:?}", e);
+                        ErrorReport::send(
+                            Component::Ota,
+                            ErrorCode::Unknown,
+                            Severity::RecoverableError,
+                            UpdateErrorCode::Write as u8,
+                            &[0u8, 0u8, 0u8],
+                        )
+                        .await;
+                    }
+                }
+            }
+
             buffer.clear();
         }
     }
@@ -138,35 +165,4 @@ impl Update {
     pub async fn erase(&mut self, _id: CanId, _data: &[u8], _remote_request: bool) {}
     pub async fn read(&mut self, _id: CanId, _data: &[u8], _remote_request: bool) {}
     pub async fn verify(&mut self, _id: CanId, _data: &[u8], _remote_request: bool) {}
-}
-
-#[embassy_executor::task]
-async fn ota_writer_task() {
-    let receiver = WRITE_QUEUE.receiver();
-    loop {
-        let data = receiver.receive().await;
-        let mut ota_guard = OTA.lock().await;
-        if let Some(ref mut ota) = *ota_guard {
-            match ota.ota_write_chunk(&*data) {
-                Ok(true) => {
-                    println!("last chunk");
-                    ota.ota_flush(true, true).unwrap();
-                }
-                Ok(false) => {
-                    // continue writing
-                }
-                Err(e) => {
-                    println!("Write failed: {:?}", e);
-                    ErrorReport::send(
-                        Component::Ota,
-                        ErrorCode::Unknown,
-                        Severity::RecoverableError,
-                        UpdateErrorCode::Write as u8,
-                        &[0u8, 0u8, 0u8],
-                    )
-                    .await;
-                }
-            }
-        }
-    }
 }

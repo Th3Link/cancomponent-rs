@@ -1,9 +1,11 @@
 use core::ops::Range;
+use core::result::Result;
 use embassy_embedded_hal::adapter::BlockingAsync;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
 use esp_storage::FlashStorage;
 use heapless::String;
+use num_enum::{IntoPrimitive, TryFromPrimitive};
 use sequential_storage::cache::NoCache;
 use sequential_storage::map::{fetch_item, store_item};
 
@@ -11,8 +13,8 @@ pub const CONFIG_PARTITION: Range<u32> = 0x9000..0xFC000;
 
 pub static CONFIG: Mutex<CriticalSectionRawMutex, Option<Config>> = Mutex::new(None);
 
+#[derive(Copy, Clone, IntoPrimitive, TryFromPrimitive)]
 #[repr(u8)]
-#[derive(Copy, Clone)]
 pub enum Key {
     RelaisMode = 1,
     ExtensionMode = 2,
@@ -21,25 +23,6 @@ pub enum Key {
     CustomString = 5,
     Baudrate = 6,
     HardwareRevision = 7,
-}
-
-#[repr(u8)]
-#[derive(Copy, Clone)]
-pub enum DeviceType {
-    Button = 4,
-    Relais = 5,
-    Unknown = 255,
-}
-
-impl From<u8> for DeviceType {
-    fn from(value: u8) -> Self {
-        use DeviceType::*;
-        match value {
-            4 => Button,
-            5 => Relais,
-            _ => Unknown,
-        }
-    }
 }
 
 pub async fn init() {
@@ -61,6 +44,12 @@ pub struct Config {
     flash: BlockingAsync<FlashStorage>,
     buffer: [u8; 256],
     cache: NoCache,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Config {

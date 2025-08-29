@@ -1,7 +1,8 @@
-use esp_println::println;
-
+use crate::can::send_can_message;
+use crate::config::{self, config};
 use crate::relais_manager::RelayManager;
 use cancomponents_core::can_id::CanId;
+use cancomponents_core::can_message_type::CanMessageType;
 use cancomponents_core::relais_message::{RelaisMessage, RelaisState};
 use embassy_executor::Spawner;
 use embassy_futures::select::{select, Either};
@@ -11,17 +12,19 @@ use embassy_time::{Instant, Timer};
 use esp_hal::gpio::interconnect::PeripheralOutput;
 use esp_hal::i2c::master::{Config, I2c};
 use esp_hal::Async;
+use num_enum::{IntoPrimitive, TryFromPrimitive};
 
-const BANK: [u8; 2] = [0x26, 0x27];
 const MAX_RELAIS: usize = 16;
-// hard coded for now until we have an nvs working
-const RELAIS_MODE: RelaisMode = RelaisMode::HardwareRollershutter;
 
+#[derive(Copy, Clone, IntoPrimitive, TryFromPrimitive)]
+#[repr(u8)]
 pub enum RelaisMode {
-    Relais = 0,
-    SoftwareRollershutter = 1,
-    HardwareRollershutter = 2,
+    Off = 0,
+    Relais = 1,
+    SoftwareRollershutter = 2,
+    HardwareRollershutter = 3,
 }
+
 static RELAIS_CHANNEL: Channel<CriticalSectionRawMutex, RelaisMessage, MAX_RELAIS> = Channel::new();
 
 pub async fn relais_handler(_id: CanId, data: &[u8], _remote_request: bool) {
@@ -31,39 +34,44 @@ pub async fn relais_handler(_id: CanId, data: &[u8], _remote_request: bool) {
     // silent error, already reportet is relais_message
 }
 
-pub async fn rollershutter_handler(_id: CanId, data: &[u8], _remote_request: bool) {
-    if let Ok(msg) = RelaisMessage::from_bytes(data).await {
-        RELAIS_CHANNEL.send(msg).await;
-    }
-    // silent error, already reportet is relais_message
-}
-
 pub struct Relais {
     i2c: I2c<'static, Async>,
     expanders: [u8; 2],
+    bank_addr: [u8; 2],
+    relais_mode: RelaisMode,
 }
 
 impl Relais {
-    pub fn init(
+    pub async fn init(
         i2c0: esp_hal::peripherals::I2C0<'static>,
         sda: impl PeripheralOutput<'static>,
         scl: impl PeripheralOutput<'static>,
+        bank_addr: [u8; 2],
         spawner: &Spawner,
     ) {
+        let relais_mode = config()
+            .await
+            .get_u8(config::Key::RelaisMode)
+            .await
+            .and_then(|v| RelaisMode::try_from(v).ok())
+            .unwrap_or(RelaisMode::Relais);
+
         let mut i2c = I2c::new(i2c0, Config::default())
             .unwrap()
             .with_sda(sda)
             .with_scl(scl)
             .into_async();
 
-        i2c.write(BANK[0], &[0x3, 0x0]).ok();
-        i2c.write(BANK[1], &[0x3, 0x0]).ok();
-        i2c.write(BANK[0], &[0x1, 0x0]).ok();
-        i2c.write(BANK[1], &[0x1, 0x0]).ok();
+        i2c.write(bank_addr[0], &[0x3, 0x0]).ok();
+        i2c.write(bank_addr[1], &[0x3, 0x0]).ok();
+        i2c.write(bank_addr[0], &[0x1, 0x0]).ok();
+        i2c.write(bank_addr[1], &[0x1, 0x0]).ok();
 
         let relais = Relais {
-            expanders: [0, 0],
             i2c,
+            expanders: [0, 0],
+            bank_addr,
+            relais_mode,
         };
 
         spawner.spawn(relais_task(relais)).unwrap();
@@ -88,55 +96,53 @@ impl Relais {
         (0, 0),
     ];
 
-    pub fn set(&mut self, num: usize, state: RelaisState) {
-        match RELAIS_MODE {
-            RelaisMode::Relais => self.sethw(num, state),
+    pub fn set(&mut self, num: usize, state: &RelaisState) {
+        match self.relais_mode {
+            RelaisMode::Relais => {
+                self.sethw(num, state);
+            }
             RelaisMode::SoftwareRollershutter => match state {
                 RelaisState::Up => {
-                    self.sethw(num * 2, RelaisState::On);
-                    self.sethw(num * 2 + 1, RelaisState::Off);
+                    self.sethw(num * 2, &RelaisState::On);
+                    self.sethw(num * 2 + 1, &RelaisState::Off);
                 }
                 RelaisState::Down => {
-                    self.sethw(num * 2, RelaisState::On);
-                    self.sethw(num * 2 + 1, RelaisState::Off);
+                    self.sethw(num * 2, &RelaisState::On);
+                    self.sethw(num * 2 + 1, &RelaisState::Off);
                 }
                 _ => {
-                    self.sethw(num * 2, RelaisState::Off);
-                    self.sethw(num * 2 + 1, RelaisState::Off);
+                    self.sethw(num * 2, &RelaisState::Off);
+                    self.sethw(num * 2 + 1, &RelaisState::Off);
                 }
             },
             RelaisMode::HardwareRollershutter => match state {
                 RelaisState::Up => {
-                    self.sethw(num * 2, RelaisState::On);
-                    self.sethw(num * 2 + 1, RelaisState::Off);
+                    self.sethw(num * 2, &RelaisState::On);
+                    self.sethw(num * 2 + 1, &RelaisState::Off);
                 }
                 RelaisState::Down => {
-                    self.sethw(num * 2, RelaisState::On);
-                    self.sethw(num * 2 + 1, RelaisState::On);
+                    self.sethw(num * 2, &RelaisState::On);
+                    self.sethw(num * 2 + 1, &RelaisState::On);
                 }
                 _ => {
-                    self.sethw(num * 2, RelaisState::Off);
-                    self.sethw(num * 2 + 1, RelaisState::Off);
+                    self.sethw(num * 2, &RelaisState::Off);
+                    self.sethw(num * 2 + 1, &RelaisState::Off);
                 }
             },
+            _ => {}
         }
     }
 
-    fn sethw(&mut self, num: usize, state: RelaisState) {
+    fn sethw(&mut self, num: usize, state: &RelaisState) {
         if let Some(&(expander, bit)) = Self::MAPPING.get(num) {
-            println!("expander {expander}, bit {bit}");
             let mask = 1 << bit;
-            if state == RelaisState::On {
+            if state == &RelaisState::On {
                 self.expanders[expander] |= mask;
             } else {
                 self.expanders[expander] &= !mask;
             }
-            println!(
-                "i2c write to {:#x?}: {:#x?}",
-                BANK[expander], self.expanders[expander]
-            );
             self.i2c
-                .write(BANK[expander], &[0x1, self.expanders[expander]])
+                .write(self.bank_addr[expander], &[0x1, self.expanders[expander]])
                 .ok();
         }
     }
@@ -151,7 +157,9 @@ async fn relais_task(mut relais: Relais) {
 
         // 1. Abgelaufene Zeitsteuerungen
         for (num, state) in manager.poll_expired(now).into_iter() {
-            relais.set(num as usize, state);
+            relais.set(num, &state);
+            let data: &[u8; 1] = &[state as u8];
+            send_can_message(CanMessageType::RelaisState, data, false).await;
         }
 
         // 2. Warte auf nächsten Befehl oder nächstes Timeout
@@ -160,12 +168,12 @@ async fn relais_task(mut relais: Relais) {
 
         match select(recv, delay).await {
             Either::First(msg) => {
-                println!("relais future met");
                 let changed =
-                    manager.apply_command(msg.num, msg.state, msg.duration, Instant::now());
+                    manager.apply_command(msg.num, &msg.state, msg.duration, Instant::now());
                 if changed {
-                    relais.set(msg.num, msg.state);
-                    println!("set relais");
+                    relais.set(msg.num, &msg.state);
+                    let data: &[u8; 1] = &[msg.state as u8];
+                    send_can_message(CanMessageType::RelaisState, data, false).await;
                 }
             }
             Either::Second(_) => {}

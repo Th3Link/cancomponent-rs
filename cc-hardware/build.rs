@@ -5,19 +5,21 @@ fn main() {
     linker_be_nice();
     // make sure linkall.x is the last linker script (otherwise might cause problems with flip-link)
     println!("cargo:rustc-link-arg=-Tlinkall.x");
+    let profile = std::env::var("PROFILE").unwrap();
+    println!("cargo:rerun-if-changed=target/xtensa-esp32-none-elf/{profile}/cancomponents");
     create_esp32_image();
 }
 
 fn create_esp32_image() {
     let profile = std::env::var("PROFILE").unwrap();
-    let target_binary = format!("target/xtensa-esp32-none-elf/{}/cancomponents", profile);
-    let ota_binary = format!("target/xtensa-esp32-none-elf/{}/cancomponents.bin", profile);
+    let target_binary = format!("target/xtensa-esp32-none-elf/{profile}/cancomponents");
+    let ota_binary = format!("target/xtensa-esp32-none-elf/{profile}/cancomponents.bin");
 
     if let Err(e) = Command::new("espflash")
         .args(["save-image", "--chip", "esp32", &target_binary, &ota_binary])
         .status()
     {
-        println!("cargo:warning=Failed to create ESP32 image: {}", e);
+        println!("cargo:warning=Failed to create ESP32 image: {e}");
         // Kein panic! - Build soll auch ohne Image weiterlaufen
     }
 }

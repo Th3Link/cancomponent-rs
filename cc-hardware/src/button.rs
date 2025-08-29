@@ -1,35 +1,17 @@
-use crate::can;
+use crate::can::send_can_message;
+use crate::gpio_interrupt::register_gpio_handler;
+use crate::gpio_interrupt::GpioChannel;
 use cancomponents_core::button_message::ButtonMessage;
 use cancomponents_core::button_message::ButtonState;
 use cancomponents_core::can_message_type::CanMessageType;
-use core::cell::RefCell;
-use critical_section::Mutex;
 use embassy_executor::Spawner;
 use embassy_futures::select::{select, Either};
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
 use esp_hal::gpio::Event;
 use esp_hal::gpio::Input;
 use esp_hal::gpio::InputConfig;
-use esp_hal::gpio::Io;
 use esp_hal::gpio::Pull;
-use esp_hal::handler;
-use esp_hal::peripherals::IO_MUX;
-use esp_hal::ram;
 use esp_println::println;
-
-use crate::can::send_can_message;
-
-static BUTTONS: [(
-    Mutex<RefCell<Option<Input>>>,
-    Channel<CriticalSectionRawMutex, bool, 4>,
-); 4] = [
-    (Mutex::new(RefCell::new(None)), Channel::new()),
-    (Mutex::new(RefCell::new(None)), Channel::new()),
-    (Mutex::new(RefCell::new(None)), Channel::new()),
-    (Mutex::new(RefCell::new(None)), Channel::new()),
-];
 
 const DEBOUNCE_TIME: Duration = Duration::from_millis(10); // Entprellzeit
 const MULTI_CLICK_MAX: Duration = Duration::from_millis(200); // Zeitfenster für Double/Triple/Quad
@@ -48,41 +30,33 @@ impl Button {
         button1: impl esp_hal::gpio::InputPin + 'static,
         button2: impl esp_hal::gpio::InputPin + 'static,
         button3: impl esp_hal::gpio::InputPin + 'static,
-        io_mux: IO_MUX<'static>,
         spawner: &Spawner,
     ) {
-        let mut io = Io::new(io_mux);
-        io.set_interrupt_handler(handler);
-
         let config = InputConfig::default().with_pull(Pull::Up);
         let mut button0 = Input::new(button0, config);
         let mut button1 = Input::new(button1, config);
         let mut button2 = Input::new(button2, config);
         let mut button3 = Input::new(button3, config);
 
-        critical_section::with(|cs| {
-            button0.listen(Event::AnyEdge);
-            BUTTONS[0].0.borrow_ref_mut(cs).replace(button0);
+        button0.listen(Event::AnyEdge);
+        button1.listen(Event::AnyEdge);
+        button2.listen(Event::AnyEdge);
+        button3.listen(Event::AnyEdge);
 
-            button1.listen(Event::AnyEdge);
-            BUTTONS[1].0.borrow_ref_mut(cs).replace(button1);
+        let ch0 = register_gpio_handler(button0).unwrap();
+        let ch1 = register_gpio_handler(button1).unwrap();
+        let ch2 = register_gpio_handler(button2).unwrap();
+        let ch3 = register_gpio_handler(button3).unwrap();
 
-            button2.listen(Event::AnyEdge);
-            BUTTONS[2].0.borrow_ref_mut(cs).replace(button2);
-
-            button3.listen(Event::AnyEdge);
-            BUTTONS[3].0.borrow_ref_mut(cs).replace(button3);
-        });
-
-        spawner.spawn(run(0)).unwrap();
-        spawner.spawn(run(1)).unwrap();
-        spawner.spawn(run(2)).unwrap();
-        spawner.spawn(run(3)).unwrap();
+        spawner.spawn(run(0, ch0)).unwrap();
+        spawner.spawn(run(1, ch1)).unwrap();
+        spawner.spawn(run(2, ch2)).unwrap();
+        spawner.spawn(run(3, ch3)).unwrap();
     }
 
-    pub async fn iterate(&mut self, index: usize) {
+    pub async fn iterate(&mut self, index: usize, channel: &GpioChannel) {
         let debounce_time = Timer::after(DEBOUNCE_TIME);
-        let next_state = BUTTONS[index].1.receive();
+        let next_state = channel.receive();
         match select(next_state, debounce_time).await {
             Either::First(_) => {
                 //bounces
@@ -95,7 +69,7 @@ impl Button {
 
         match self.state {
             ButtonState::Released => {
-                let next_state = BUTTONS[index].1.receive().await;
+                let next_state = channel.receive().await;
                 if next_state {
                     self.state = ButtonState::Pressed;
                     let bm = ButtonMessage::new(index, ButtonState::Pressed, 0);
@@ -104,7 +78,7 @@ impl Button {
             }
             ButtonState::Pressed => {
                 let hold_threshold = Timer::after(HOLD_THRESHOLD);
-                let next_state = BUTTONS[index].1.receive();
+                let next_state = channel.receive();
                 match select(next_state, hold_threshold).await {
                     Either::First(_) => {
                         self.clicks += 1;
@@ -120,7 +94,7 @@ impl Button {
             }
             ButtonState::Hold => {
                 let hold_repeat = Timer::after(HOLD_REPEAT);
-                let next_state = BUTTONS[index].1.receive();
+                let next_state = channel.receive();
                 match select(next_state, hold_repeat).await {
                     Either::First(_) => {
                         self.state = ButtonState::Released;
@@ -139,7 +113,7 @@ impl Button {
             }
             ButtonState::Multi => {
                 let hold_repeat = Timer::after(MULTI_CLICK_MAX);
-                let next_state = BUTTONS[index].1.receive();
+                let next_state = channel.receive();
                 match select(next_state, hold_repeat).await {
                     Either::First(s) => {
                         if s {
@@ -168,29 +142,13 @@ impl Button {
 }
 
 #[embassy_executor::task(pool_size = 4)]
-pub async fn run(index: usize) {
+pub async fn run(index: usize, channel: &'static GpioChannel) {
     let mut button = Button {
         clicks: 0,
         hold_repeat: 0,
         state: ButtonState::Released,
     };
     loop {
-        button.iterate(index).await;
+        button.iterate(index, channel).await;
     }
-}
-
-#[handler]
-#[ram]
-fn handler() {
-    critical_section::with(|cs| {
-        for (_i, cell) in BUTTONS.iter().enumerate() {
-            if let Some(btn) = cell.0.borrow_ref_mut(cs).as_mut() {
-                if btn.is_interrupt_set() {
-                    let pressed = btn.is_low(); // Pull-Up: Low = gedrückt
-                    cell.1.try_send(pressed).ok();
-                    btn.clear_interrupt();
-                }
-            }
-        }
-    });
 }

@@ -9,3 +9,4 @@ embassy-time     = { version = "0.4.0"}
 embassy-sync     = { version = "0.6.2"}
 heapless         = { version = "0.8.0"}
 async-trait      = { version = "0.1"}
+num_enum         = { version = "0.7", default-features = false }

@@ -1,12 +1,13 @@
 use embassy_time::Duration;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(u8)]
 pub enum RelaisState {
     Off = 0,
     Up = 1,
     Down = 2,
     On = 3,
+    Unknown = 255,
 }
 
 impl core::convert::TryFrom<u8> for RelaisState {
@@ -18,12 +19,13 @@ impl core::convert::TryFrom<u8> for RelaisState {
             0 => Off,
             1 => Up,
             2 => Down,
+            3 => On,
             _ => return Err(()),
         };
         Ok(result)
     }
 }
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct RelaisMessage {
     pub num: usize,
     pub state: RelaisState,
@@ -58,7 +60,7 @@ impl RelaisMessage {
         let mut bytes = [0u8; 6];
 
         bytes[0] = self.num as u8;
-        bytes[1] = self.state as u8;
+        bytes[1] = self.state.clone() as u8;
 
         let ms = self.duration.as_millis() as u32;
         let dur_bytes = ms.to_le_bytes();

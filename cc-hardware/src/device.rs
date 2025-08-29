@@ -72,9 +72,15 @@ impl Device {
         self.uid0(id, data, true).await;
         self.uid1(id, data, true).await;
         self.custom_string(id, data, true).await;
-        let mut hwrev_id = id;
-        hwrev_id.msg_type = CanMessageType::HwRev;
-        self.u8_val(hwrev_id, data, true, config::Key::HardwareRevision)
+        let mut return_id = id;
+        return_id.msg_type = CanMessageType::HwRev;
+        self.u8_val(return_id, data, true, config::Key::HardwareRevision)
+            .await;
+        return_id.msg_type = CanMessageType::RelaisMode;
+        self.u8_val(return_id, data, true, config::Key::RelaisMode)
+            .await;
+        return_id.msg_type = CanMessageType::ExtensionMode;
+        self.u8_val(return_id, data, true, config::Key::ExtensionMode)
             .await;
         self.application_version(id, data, true).await;
     }
@@ -131,20 +137,18 @@ impl Device {
             let mut config = config().await;
             txdata[0] = config.get_u8(key).await?;
             send_can_message(id.msg_type, &txdata, false).await;
+        } else if data.len() == 1 {
+            let mut config = config().await;
+            config.set_u8(key, data[0]).await.ok()?;
         } else {
-            if data.len() == 1 {
-                let mut config = config().await;
-                config.set_u8(key, data[0]).await.ok()?;
-            } else {
-                ErrorReport::send(
-                    Component::Device,
-                    ErrorCode::InvalidData,
-                    Severity::Warning,
-                    0,
-                    &[id.msg_type as u8, data.len() as u8, 0u8],
-                )
-                .await;
-            }
+            ErrorReport::send(
+                Component::Device,
+                ErrorCode::InvalidData,
+                Severity::Warning,
+                0,
+                &[id.msg_type as u8, data.len() as u8, 0u8],
+            )
+            .await;
         }
         Some(())
     }
@@ -189,7 +193,7 @@ impl Device {
     }
     pub async fn restart(&mut self, _id: CanId, data: &[u8], remote_request: bool) {
         if !remote_request && data.len() == 1 && data[0] == 1 {
-            //esp_hal::system::software_reset();
+            esp_hal::system::software_reset();
         }
     }
 }

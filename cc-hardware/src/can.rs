@@ -1,6 +1,6 @@
 use crate::config;
 use crate::device::device;
-use crate::relais::{relais_handler, rollershutter_handler};
+use crate::relais::relais_handler;
 use crate::update::update;
 use cancomponents_core::can_id::CanId;
 use cancomponents_core::can_message_type::CanMessageType;
@@ -11,15 +11,11 @@ use embassy_sync::mutex::Mutex;
 use embedded_can::Frame;
 use esp_hal::gpio::{InputPin, OutputPin};
 use esp_hal::twai::filter::DualExtendedFilter;
-use esp_hal::twai::{self, EspTwaiFrame, TimingConfig, TwaiMode, TwaiRx, TwaiTx};
+use esp_hal::twai::{self, EspTwaiFrame, TimingConfig, TwaiMode};
 use esp_hal::Async;
 use esp_println::println;
-use static_cell::StaticCell;
 
 pub static CAN_CHANNEL: Channel<CriticalSectionRawMutex, EspTwaiFrame, 32> = Channel::new();
-static TWAI_RX: StaticCell<TwaiRx<'_, Async>> = StaticCell::new();
-static TWAI_TX: StaticCell<TwaiTx<'_, Async>> = StaticCell::new();
-
 pub static DEVICE_ID: Mutex<CriticalSectionRawMutex, u8> = Mutex::new(255);
 pub static DEVICE_TYPE: Mutex<CriticalSectionRawMutex, u8> = Mutex::new(255);
 
@@ -72,14 +68,10 @@ pub async fn init(
     }
     let (rx, tx) = twai.split();
 
-    let rx = TWAI_RX.init(rx);
-    let tx = TWAI_TX.init(tx);
-
     spawner.spawn(can_send_task(tx)).unwrap();
     spawner.spawn(can_recieve_task(rx)).unwrap();
 }
 
-// Typ für die CAN-Handler-Funktion
 pub async fn dispatch(frame: &EspTwaiFrame) {
     let id = match frame.id() {
         embedded_can::Id::Extended(id) => CanId::from(id), // Nur das letzte Byte relevant
@@ -93,11 +85,12 @@ pub async fn dispatch(frame: &EspTwaiFrame) {
         return;
     }
 
-    println!("recv: {frame:?}");
+    // this adds quite a bit of delay. careful with that...
+    //println!("recv: {frame:?}");
     match id.msg_type {
         CanMessageType::Relais => relais_handler(id, frame.data(), frame.is_remote_frame()).await,
         CanMessageType::Rollershutter => {
-            rollershutter_handler(id, frame.data(), frame.is_remote_frame()).await
+            relais_handler(id, frame.data(), frame.is_remote_frame()).await
         }
         CanMessageType::RelaisMode => {
             let _ = device()
@@ -247,7 +240,7 @@ async fn ping(id: CanId) {
 }
 
 async fn unknown_handler(frame: &EspTwaiFrame) {
-    let id = match frame.id() {
+    let _id = match frame.id() {
         embedded_can::Id::Extended(id) => id.as_raw(), // Nur das letzte Byte relevant
         embedded_can::Id::Standard(id) => {
             println!("WARN: Ignoring standard ID: {:?}", id);
@@ -263,7 +256,7 @@ pub async fn send_can_message(msg_id: CanMessageType, data: &[u8], rtr: bool) {
     let id: embedded_can::ExtendedId = CanId::new(device_type, device_id, msg_id).into();
     let id: esp_hal::twai::ExtendedId = id.into();
     let frame = if rtr {
-        EspTwaiFrame::new_remote(id, data.len() as usize).unwrap()
+        EspTwaiFrame::new_remote(id, data.len()).unwrap()
     } else {
         EspTwaiFrame::new(id, data).unwrap()
     };
@@ -271,31 +264,24 @@ pub async fn send_can_message(msg_id: CanMessageType, data: &[u8], rtr: bool) {
     CAN_CHANNEL.send(frame).await
 }
 
-// === CAN Task ===
-
 #[embassy_executor::task]
-pub async fn can_recieve_task(rx: &'static mut TwaiRx<'static, Async>) {
+pub async fn can_recieve_task(mut rx: twai::TwaiRx<'static, Async>) {
     println!("can_recieve_task started");
     loop {
         if let Ok(frame) = rx.receive_async().await {
             dispatch(&frame).await;
         } else {
-            println!("some error..");
+            println!("recv error");
         }
     }
 }
 
 #[embassy_executor::task]
-pub async fn can_send_task(tx: &'static mut TwaiTx<'static, Async>) {
+pub async fn can_send_task(mut tx: twai::TwaiTx<'static, Async>) {
     println!("can_send_task started");
     loop {
         let frame = CAN_CHANNEL.receive().await;
-        println!("send: {frame:?}");
-        //while (tx.transmit(&frame).inspect_err(|e| println!("{e:?}")).ok();
-        tx.transmit_async(&frame)
-            .await
-            .inspect_err(|e| println!("{e:?}"))
-            .unwrap();
+        tx.transmit_async(&frame).await.unwrap();
         println!("sent: {frame:?}");
     }
 }

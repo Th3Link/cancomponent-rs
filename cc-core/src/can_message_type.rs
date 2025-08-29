@@ -46,6 +46,7 @@ pub enum CanMessageType {
     LogDownload = 155,
     Ping = 156,
     PingDisable = 157,
+    Echo = 158,
     InvalidMessage = 255,
 }
 
