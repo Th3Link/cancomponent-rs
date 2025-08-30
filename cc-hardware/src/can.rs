@@ -1,9 +1,11 @@
 use crate::config;
 use crate::device::device;
+use crate::echo_guard::{disable_echo, dispatch_echo};
 use crate::relais::relais_handler;
 use crate::update::update;
 use cancomponents_core::can_id::CanId;
 use cancomponents_core::can_message_type::CanMessageType;
+use core::fmt::Write;
 use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
@@ -14,10 +16,12 @@ use esp_hal::twai::filter::DualExtendedFilter;
 use esp_hal::twai::{self, EspTwaiFrame, TimingConfig, TwaiMode};
 use esp_hal::Async;
 use esp_println::println;
+use heapless::String;
 
 pub static CAN_CHANNEL: Channel<CriticalSectionRawMutex, EspTwaiFrame, 32> = Channel::new();
 pub static DEVICE_ID: Mutex<CriticalSectionRawMutex, u8> = Mutex::new(255);
 pub static DEVICE_TYPE: Mutex<CriticalSectionRawMutex, u8> = Mutex::new(255);
+pub static SILENCE: Mutex<CriticalSectionRawMutex, bool> = Mutex::new(false);
 
 pub fn make_filter(device_type: u8, device_id: u8) -> DualExtendedFilter {
     let is_ng = true;
@@ -86,7 +90,8 @@ pub async fn dispatch(frame: &EspTwaiFrame) {
     }
 
     // this adds quite a bit of delay. careful with that...
-    //println!("recv: {frame:?}");
+    // println!("recv: {frame:?}");
+
     match id.msg_type {
         CanMessageType::Relais => relais_handler(id, frame.data(), frame.is_remote_frame()).await,
         CanMessageType::Rollershutter => {
@@ -229,11 +234,25 @@ pub async fn dispatch(frame: &EspTwaiFrame) {
         CanMessageType::UpdateSilence => silence(frame).await,
         CanMessageType::Ping => ping(id).await,
         CanMessageType::Available => ping(id).await,
+        CanMessageType::Echo => dispatch_echo().await,
         _ => unknown_handler(frame).await,
     }
 }
 
-async fn silence(_frame: &EspTwaiFrame) {}
+async fn silence(frame: &EspTwaiFrame) {
+    let data = frame.data();
+    if data.len() == 1 {
+        if data[0] == 0 {
+            // silence off
+            *SILENCE.lock().await = false;
+            dispatch_echo().await;
+        } else {
+            // silence on
+            *SILENCE.lock().await = true;
+            disable_echo().await;
+        }
+    }
+}
 
 async fn ping(id: CanId) {
     send_can_message(id.msg_type, &[], false).await;
@@ -251,6 +270,9 @@ async fn unknown_handler(frame: &EspTwaiFrame) {
 }
 
 pub async fn send_can_message(msg_id: CanMessageType, data: &[u8], rtr: bool) {
+    if *SILENCE.lock().await {
+        return;
+    }
     let device_type = *DEVICE_TYPE.lock().await;
     let device_id = *DEVICE_ID.lock().await;
     let id: embedded_can::ExtendedId = CanId::new(device_type, device_id, msg_id).into();
@@ -262,6 +284,51 @@ pub async fn send_can_message(msg_id: CanMessageType, data: &[u8], rtr: bool) {
     };
 
     CAN_CHANNEL.send(frame).await
+}
+
+fn log_frame(frame: &EspTwaiFrame) {
+    let mut out: String<128> = String::new();
+
+    // ID
+    match frame.id() {
+        embedded_can::Id::Standard(id) => {
+            let _ = write!(out, "id: {:03X}", id.as_raw());
+        }
+        embedded_can::Id::Extended(id) => {
+            let _ = write!(out, "id: {:08X}", id.as_raw());
+        }
+    }
+
+    match frame.id() {
+        embedded_can::Id::Extended(id) => {
+            let id = CanId::from(id);
+            let _ = write!(out, ", msg: {:?}", id.msg_type);
+        }
+        embedded_can::Id::Standard(id) => {
+            println!("WARN: Ignoring standard ID: {:?}", id);
+            return;
+        }
+    };
+
+    // DLC
+    let _ = write!(out, ", dlc: {}", frame.dlc());
+
+    // Data
+    let _ = write!(out, ", data: [");
+    for (i, b) in frame.data().iter().enumerate() {
+        if i > 0 {
+            let _ = write!(out, " ");
+        }
+        let _ = write!(out, "{:02X}", b);
+    }
+    let _ = write!(out, "]");
+
+    // Remote
+    let _ = write!(out, ", is_remote: {}", frame.is_remote_frame());
+
+    // Am Ende z. B. via defmt, rtt-target, log, oder println! ausgeben
+    // (hier Beispiel mit defmt)
+    println!("{}", out.as_str());
 }
 
 #[embassy_executor::task]
@@ -282,6 +349,6 @@ pub async fn can_send_task(mut tx: twai::TwaiTx<'static, Async>) {
     loop {
         let frame = CAN_CHANNEL.receive().await;
         tx.transmit_async(&frame).await.unwrap();
-        println!("sent: {frame:?}");
+        log_frame(&frame);
     }
 }

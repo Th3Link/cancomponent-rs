@@ -8,15 +8,16 @@ use embassy_executor::Spawner;
 use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
-use embassy_time::{Instant, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use esp_hal::gpio::interconnect::PeripheralOutput;
 use esp_hal::i2c::master::{Config, I2c};
 use esp_hal::Async;
+use esp_println::println;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 const MAX_RELAIS: usize = 16;
 
-#[derive(Copy, Clone, IntoPrimitive, TryFromPrimitive)]
+#[derive(Copy, Clone, Debug, IntoPrimitive, TryFromPrimitive)]
 #[repr(u8)]
 pub enum RelaisMode {
     Off = 0,
@@ -55,17 +56,17 @@ impl Relais {
             .await
             .and_then(|v| RelaisMode::try_from(v).ok())
             .unwrap_or(RelaisMode::Relais);
-
+        println!("relais init: {relais_mode:?}");
         let mut i2c = I2c::new(i2c0, Config::default())
             .unwrap()
             .with_sda(sda)
             .with_scl(scl)
             .into_async();
 
-        i2c.write(bank_addr[0], &[0x3, 0x0]).ok();
-        i2c.write(bank_addr[1], &[0x3, 0x0]).ok();
-        i2c.write(bank_addr[0], &[0x1, 0x0]).ok();
-        i2c.write(bank_addr[1], &[0x1, 0x0]).ok();
+        i2c.write_async(bank_addr[0], &[0x3, 0x0]).await.ok();
+        i2c.write_async(bank_addr[1], &[0x3, 0x0]).await.ok();
+        i2c.write_async(bank_addr[0], &[0x1, 0x0]).await.ok();
+        i2c.write_async(bank_addr[1], &[0x1, 0x0]).await.ok();
 
         let relais = Relais {
             i2c,
@@ -96,53 +97,62 @@ impl Relais {
         (0, 0),
     ];
 
-    pub fn set(&mut self, num: usize, state: &RelaisState) {
+    pub async fn set(&mut self, num: usize, state: RelaisState) {
+        println!("relais set: {state:?}");
         match self.relais_mode {
             RelaisMode::Relais => {
-                self.sethw(num, state);
+                println!("relais set: {state:?}");
+                self.sethw(num, state).await;
             }
             RelaisMode::SoftwareRollershutter => match state {
                 RelaisState::Up => {
-                    self.sethw(num * 2, &RelaisState::On);
-                    self.sethw(num * 2 + 1, &RelaisState::Off);
+                    self.sethw(num * 2, RelaisState::On).await;
+                    self.sethw(num * 2 + 1, RelaisState::Off).await;
                 }
                 RelaisState::Down => {
-                    self.sethw(num * 2, &RelaisState::On);
-                    self.sethw(num * 2 + 1, &RelaisState::Off);
+                    self.sethw(num * 2, RelaisState::On).await;
+                    self.sethw(num * 2 + 1, RelaisState::Off).await;
                 }
                 _ => {
-                    self.sethw(num * 2, &RelaisState::Off);
-                    self.sethw(num * 2 + 1, &RelaisState::Off);
+                    self.sethw(num * 2, RelaisState::Off).await;
+                    self.sethw(num * 2 + 1, RelaisState::Off).await;
                 }
             },
             RelaisMode::HardwareRollershutter => match state {
                 RelaisState::Up => {
-                    self.sethw(num * 2, &RelaisState::On);
-                    self.sethw(num * 2 + 1, &RelaisState::Off);
+                    self.sethw(num * 2, RelaisState::On).await;
+                    self.sethw(num * 2 + 1, RelaisState::Off).await;
                 }
                 RelaisState::Down => {
-                    self.sethw(num * 2, &RelaisState::On);
-                    self.sethw(num * 2 + 1, &RelaisState::On);
+                    self.sethw(num * 2, RelaisState::On).await;
+                    self.sethw(num * 2 + 1, RelaisState::On).await;
                 }
                 _ => {
-                    self.sethw(num * 2, &RelaisState::Off);
-                    self.sethw(num * 2 + 1, &RelaisState::Off);
+                    self.sethw(num * 2, RelaisState::Off).await;
+                    self.sethw(num * 2 + 1, RelaisState::Off).await;
                 }
             },
             _ => {}
         }
     }
 
-    fn sethw(&mut self, num: usize, state: &RelaisState) {
+    async fn sethw(&mut self, num: usize, state: RelaisState) {
         if let Some(&(expander, bit)) = Self::MAPPING.get(num) {
             let mask = 1 << bit;
-            if state == &RelaisState::On {
+            if state == RelaisState::On {
                 self.expanders[expander] |= mask;
+                println!("switch on {expander} {bit}");
             } else {
                 self.expanders[expander] &= !mask;
             }
+            println!(
+                "write {} to {}",
+                self.expanders[expander], self.bank_addr[expander]
+            );
             self.i2c
-                .write(self.bank_addr[expander], &[0x1, self.expanders[expander]])
+                .write_async(self.bank_addr[expander], &[0x1, self.expanders[expander]])
+                .await
+                .inspect_err(|e| println!("{e}"))
                 .ok();
         }
     }
@@ -157,9 +167,15 @@ async fn relais_task(mut relais: Relais) {
 
         // 1. Abgelaufene Zeitsteuerungen
         for (num, state) in manager.poll_expired(now).into_iter() {
-            relais.set(num, &state);
-            let data: &[u8; 1] = &[state as u8];
-            send_can_message(CanMessageType::RelaisState, data, false).await;
+            relais.set(num, state.clone()).await;
+            let data = RelaisMessage {
+                num,
+                state,
+                duration: Duration::from_millis(0),
+                bank: 0,
+            }
+            .to_bytes();
+            send_can_message(CanMessageType::RelaisState, &data, false).await;
         }
 
         // 2. Warte auf nächsten Befehl oder nächstes Timeout
@@ -171,9 +187,15 @@ async fn relais_task(mut relais: Relais) {
                 let changed =
                     manager.apply_command(msg.num, &msg.state, msg.duration, Instant::now());
                 if changed {
-                    relais.set(msg.num, &msg.state);
-                    let data: &[u8; 1] = &[msg.state as u8];
-                    send_can_message(CanMessageType::RelaisState, data, false).await;
+                    relais.set(msg.num, msg.state.clone()).await;
+                    let data = RelaisMessage {
+                        num: msg.num,
+                        state: msg.state,
+                        duration: Duration::from_millis(0),
+                        bank: msg.bank,
+                    }
+                    .to_bytes();
+                    send_can_message(CanMessageType::RelaisState, &data, false).await;
                 }
             }
             Either::Second(_) => {}

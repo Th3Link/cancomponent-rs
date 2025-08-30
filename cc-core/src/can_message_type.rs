@@ -1,4 +1,6 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use num_enum::{FromPrimitive, IntoPrimitive};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoPrimitive, FromPrimitive)]
 #[repr(u8)]
 pub enum CanMessageType {
     Available = 0,
@@ -47,59 +49,6 @@ pub enum CanMessageType {
     Ping = 156,
     PingDisable = 157,
     Echo = 158,
+    #[num_enum(default)]
     InvalidMessage = 255,
-}
-
-impl From<u8> for CanMessageType {
-    fn from(value: u8) -> Self {
-        use CanMessageType::*;
-        match value {
-            0 => Available,
-            1 => DeviceError,
-            2 => Restart,
-            3 => DeviceUid0,
-            4 => DeviceUid1,
-            5 => DeviceIdType,
-            6 => DeviceGroup,
-            7 => ApplicationVersion,
-            8 => Baudrate,
-            9 => Uptime,
-            10 => CustomString,
-            11 => PwmFrequency,
-            12 => RequestParameter,
-            13 => ApplicationVersionString,
-            14 => UpdateSilence,
-            15 => FlashStart,
-            16 => FlashSelect,
-            17 => FlashErase,
-            18 => FlashRead,
-            19 => FlashWrite,
-            20 => FlashVerify,
-            21 => FlashProgress,
-            22 => FlashComplete,
-            30 => ButtonEvent,
-            31 => TemperatureSensor,
-            41 => HwRev,
-            42 => ExtensionMode,
-            90 => LampGroup,
-            128 => PirSensor,
-            129 => HumiditySensor,
-            130 => Relais,
-            131 => RelaisState,
-            132 => Rollershutter,
-            133 => RollershutterState,
-            134 => RelaisMode,
-            140 => AmbientLightSensor,
-            141 => AmbientLightSensorWhite,
-            150 => Nightlight,
-            151 => PressureSensor,
-            152 => Co2Equivalent,
-            153 => VocBreath,
-            154 => AirQuality,
-            155 => LogDownload,
-            156 => Ping,
-            157 => PingDisable,
-            _ => InvalidMessage,
-        }
-    }
 }

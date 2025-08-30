@@ -19,6 +19,7 @@ use esp_backtrace as _;
 use esp_hal::clock::CpuClock;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal_embassy::main;
+use esp_println::println;
 
 /*struct ExtensionGpio {
     pin0: Pin + 'static,
@@ -53,9 +54,10 @@ async fn main(spawner: Spawner) -> ! {
         .and_then(|v| DeviceType::try_from(v).ok());
 
     let hwrev = config().await.get_u8(config::Key::HardwareRevision).await;
-
+    println!("device_type: {device_type:?}");
+    println!("hwrev: {hwrev:?}");
     let _extension_gpios = match (device_type, hwrev) {
-        (Some(DeviceType::Relais), Some(_)) => {
+        (Some(DeviceType::Relais), _) => {
             Relais::init(
                 peripherals.I2C0,
                 peripherals.GPIO21,

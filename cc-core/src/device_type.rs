@@ -1,6 +1,6 @@
 use num_enum::{FromPrimitive, IntoPrimitive};
 
-#[derive(Copy, Clone, IntoPrimitive, FromPrimitive)]
+#[derive(Copy, Clone, Debug, IntoPrimitive, FromPrimitive)]
 #[repr(u8)]
 pub enum DeviceType {
     #[num_enum(default)]
