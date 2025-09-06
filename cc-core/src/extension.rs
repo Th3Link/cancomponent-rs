@@ -2,7 +2,7 @@ use num_enum::{FromPrimitive, IntoPrimitive};
 
 #[derive(Copy, Clone, IntoPrimitive, FromPrimitive)]
 #[repr(u8)]
-pub enum Extension {
+pub enum Mode {
     Off = 0,
     Button = 1,
     Sensors = 2,

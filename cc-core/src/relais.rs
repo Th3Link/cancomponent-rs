@@ -1,46 +1,43 @@
 use embassy_time::Duration;
+use num_enum::{FromPrimitive, IntoPrimitive};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, IntoPrimitive, FromPrimitive)]
 #[repr(u8)]
-pub enum RelaisState {
+pub enum Mode {
+    #[num_enum(default)]
+    Off = 0,
+    Relais = 1,
+    SoftwareRollershutter = 2,
+    HardwareRollershutter = 3,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, FromPrimitive)]
+#[repr(u8)]
+pub enum State {
     Off = 0,
     Up = 1,
     Down = 2,
     On = 3,
+    #[num_enum(default)]
     Unknown = 255,
 }
 
-impl core::convert::TryFrom<u8> for RelaisState {
-    type Error = ();
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        use RelaisState::*;
-        let result = match value {
-            0 => Off,
-            1 => Up,
-            2 => Down,
-            3 => On,
-            _ => return Err(()),
-        };
-        Ok(result)
-    }
-}
 #[derive(Debug, Clone)]
-pub struct RelaisMessage {
+pub struct Message {
     pub num: usize,
-    pub state: RelaisState,
+    pub state: State,
     pub duration: Duration, // reicht, da 24 Bit = max. ~16.7 Mio ms = ~4.5h
     pub bank: u8,
 }
 
-impl RelaisMessage {
+impl Message {
     pub async fn from_bytes(data: &[u8]) -> Result<Self, ()> {
         if data.len() < 2 {
             return Err(());
         }
 
         let num = data[0] as usize;
-        let state: RelaisState = RelaisState::try_from(data[1])?;
+        let state: State = State::from(data[1]);
         let duration = {
             let mut buf = [0u8; 4];
             buf.copy_from_slice(&data[2..6]);
@@ -49,7 +46,7 @@ impl RelaisMessage {
 
         let bank = data[5];
 
-        Ok(RelaisMessage {
+        Ok(Message {
             num,
             state,
             duration,

@@ -1,4 +1,4 @@
-use cancomponents_core::relais_message::RelaisState;
+use cancomponents_core::relais::State;
 use embassy_time::{Duration, Instant};
 use heapless::{Entry, FnvIndexMap};
 
@@ -6,26 +6,21 @@ const ZERO: Duration = Duration::from_millis(0);
 
 #[derive(Clone, Debug)]
 pub struct ActiveRelais {
-    pub current: RelaisState,
-    pub scheduled: Option<(Instant, RelaisState)>,
+    pub current: State,
+    pub scheduled: Option<(Instant, State)>,
 }
 
 impl ActiveRelais {
-    pub fn update(
-        &mut self,
-        now: Instant,
-        new_state: RelaisState,
-        duration: embassy_time::Duration,
-    ) {
+    pub fn update(&mut self, now: Instant, new_state: State, duration: embassy_time::Duration) {
         self.current = new_state;
         if duration != ZERO {
-            self.scheduled = Some((now + duration, RelaisState::Off));
+            self.scheduled = Some((now + duration, State::Off));
         } else {
             self.scheduled = None;
         }
     }
 
-    pub fn poll(&mut self, now: Instant) -> Option<RelaisState> {
+    pub fn poll(&mut self, now: Instant) -> Option<State> {
         if let Some((when, action)) = self.scheduled.clone() {
             if now >= when {
                 self.scheduled = None;
@@ -68,7 +63,7 @@ impl<const N: usize> RelayManager<N> {
     pub fn apply_command(
         &mut self,
         num: usize,
-        state: &RelaisState,
+        state: &State,
         duration: embassy_time::Duration,
         now: Instant,
     ) -> bool {
@@ -82,7 +77,7 @@ impl<const N: usize> RelayManager<N> {
             }
             Entry::Vacant(entry) => {
                 let mut relay = ActiveRelais {
-                    current: RelaisState::Off,
+                    current: State::Off,
                     scheduled: None,
                 };
                 relay.update(now, state.clone(), duration);
@@ -94,7 +89,7 @@ impl<const N: usize> RelayManager<N> {
         changed
     }
 
-    pub fn poll_expired(&mut self, now: Instant) -> heapless::Vec<(usize, RelaisState), N> {
+    pub fn poll_expired(&mut self, now: Instant) -> heapless::Vec<(usize, State), N> {
         let mut result = heapless::Vec::new();
         for (&num, relay) in self.relays.iter_mut() {
             if let Some(state) = relay.poll(now) {

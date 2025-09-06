@@ -3,7 +3,7 @@ use crate::config::{self, config};
 use crate::relais_manager::RelayManager;
 use cancomponents_core::can_id::CanId;
 use cancomponents_core::can_message_type::CanMessageType;
-use cancomponents_core::relais_message::{RelaisMessage, RelaisState};
+use cancomponents_core::relais::{Message, Mode, State};
 use embassy_executor::Spawner;
 use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -13,23 +13,13 @@ use esp_hal::gpio::interconnect::PeripheralOutput;
 use esp_hal::i2c::master::{Config, I2c};
 use esp_hal::Async;
 use esp_println::println;
-use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 const MAX_RELAIS: usize = 16;
 
-#[derive(Copy, Clone, Debug, IntoPrimitive, TryFromPrimitive)]
-#[repr(u8)]
-pub enum RelaisMode {
-    Off = 0,
-    Relais = 1,
-    SoftwareRollershutter = 2,
-    HardwareRollershutter = 3,
-}
-
-static RELAIS_CHANNEL: Channel<CriticalSectionRawMutex, RelaisMessage, MAX_RELAIS> = Channel::new();
+static RELAIS_CHANNEL: Channel<CriticalSectionRawMutex, Message, MAX_RELAIS> = Channel::new();
 
 pub async fn relais_handler(_id: CanId, data: &[u8], _remote_request: bool) {
-    if let Ok(msg) = RelaisMessage::from_bytes(data).await {
+    if let Ok(msg) = Message::from_bytes(data).await {
         RELAIS_CHANNEL.send(msg).await;
     }
     // silent error, already reportet is relais_message
@@ -39,7 +29,7 @@ pub struct Relais {
     i2c: I2c<'static, Async>,
     expanders: [u8; 2],
     bank_addr: [u8; 2],
-    relais_mode: RelaisMode,
+    relais_mode: Mode,
 }
 
 impl Relais {
@@ -54,8 +44,8 @@ impl Relais {
             .await
             .get_u8(config::Key::RelaisMode)
             .await
-            .and_then(|v| RelaisMode::try_from(v).ok())
-            .unwrap_or(RelaisMode::Relais);
+            .and_then(|v| Some(Mode::from(v)))
+            .unwrap_or(Mode::Off);
         println!("relais init: {relais_mode:?}");
         let mut i2c = I2c::new(i2c0, Config::default())
             .unwrap()
@@ -97,49 +87,49 @@ impl Relais {
         (0, 0),
     ];
 
-    pub async fn set(&mut self, num: usize, state: RelaisState) {
+    pub async fn set(&mut self, num: usize, state: State) {
         println!("relais set: {state:?}");
         match self.relais_mode {
-            RelaisMode::Relais => {
+            Mode::Relais => {
                 println!("relais set: {state:?}");
                 self.sethw(num, state).await;
             }
-            RelaisMode::SoftwareRollershutter => match state {
-                RelaisState::Up => {
-                    self.sethw(num * 2, RelaisState::On).await;
-                    self.sethw(num * 2 + 1, RelaisState::Off).await;
+            Mode::SoftwareRollershutter => match state {
+                State::Up => {
+                    self.sethw(num * 2, State::On).await;
+                    self.sethw(num * 2 + 1, State::Off).await;
                 }
-                RelaisState::Down => {
-                    self.sethw(num * 2, RelaisState::On).await;
-                    self.sethw(num * 2 + 1, RelaisState::Off).await;
+                State::Down => {
+                    self.sethw(num * 2, State::On).await;
+                    self.sethw(num * 2 + 1, State::Off).await;
                 }
                 _ => {
-                    self.sethw(num * 2, RelaisState::Off).await;
-                    self.sethw(num * 2 + 1, RelaisState::Off).await;
+                    self.sethw(num * 2, State::Off).await;
+                    self.sethw(num * 2 + 1, State::Off).await;
                 }
             },
-            RelaisMode::HardwareRollershutter => match state {
-                RelaisState::Up => {
-                    self.sethw(num * 2, RelaisState::On).await;
-                    self.sethw(num * 2 + 1, RelaisState::Off).await;
+            Mode::HardwareRollershutter => match state {
+                State::Up => {
+                    self.sethw(num * 2, State::On).await;
+                    self.sethw(num * 2 + 1, State::Off).await;
                 }
-                RelaisState::Down => {
-                    self.sethw(num * 2, RelaisState::On).await;
-                    self.sethw(num * 2 + 1, RelaisState::On).await;
+                State::Down => {
+                    self.sethw(num * 2, State::On).await;
+                    self.sethw(num * 2 + 1, State::On).await;
                 }
                 _ => {
-                    self.sethw(num * 2, RelaisState::Off).await;
-                    self.sethw(num * 2 + 1, RelaisState::Off).await;
+                    self.sethw(num * 2, State::Off).await;
+                    self.sethw(num * 2 + 1, State::Off).await;
                 }
             },
             _ => {}
         }
     }
 
-    async fn sethw(&mut self, num: usize, state: RelaisState) {
+    async fn sethw(&mut self, num: usize, state: State) {
         if let Some(&(expander, bit)) = Self::MAPPING.get(num) {
             let mask = 1 << bit;
-            if state == RelaisState::On {
+            if state == State::On {
                 self.expanders[expander] |= mask;
                 println!("switch on {expander} {bit}");
             } else {
@@ -168,7 +158,7 @@ async fn relais_task(mut relais: Relais) {
         // 1. Abgelaufene Zeitsteuerungen
         for (num, state) in manager.poll_expired(now).into_iter() {
             relais.set(num, state.clone()).await;
-            let data = RelaisMessage {
+            let data = Message {
                 num,
                 state,
                 duration: Duration::from_millis(0),
@@ -188,7 +178,7 @@ async fn relais_task(mut relais: Relais) {
                     manager.apply_command(msg.num, &msg.state, msg.duration, Instant::now());
                 if changed {
                     relais.set(msg.num, msg.state.clone()).await;
-                    let data = RelaisMessage {
+                    let data = Message {
                         num: msg.num,
                         state: msg.state,
                         duration: Duration::from_millis(0),

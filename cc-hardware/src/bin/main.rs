@@ -7,6 +7,7 @@ use cancomponents::config;
 use cancomponents::config::config;
 use cancomponents::device;
 use cancomponents::echo_guard;
+use cancomponents::extension::Extension;
 use cancomponents::gpio_interrupt;
 use cancomponents::relais::Relais;
 use cancomponents::update;
@@ -17,6 +18,7 @@ use embassy_time::Duration;
 use embassy_time::Timer;
 use esp_backtrace as _;
 use esp_hal::clock::CpuClock;
+use esp_hal::gpio::Pin;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal_embassy::main;
 use esp_println::println;
@@ -57,12 +59,41 @@ async fn main(spawner: Spawner) -> ! {
     println!("device_type: {device_type:?}");
     println!("hwrev: {hwrev:?}");
     let _extension_gpios = match (device_type, hwrev) {
-        (Some(DeviceType::Relais), _) => {
+        (Some(DeviceType::Relais), Some(2)) => {
             Relais::init(
                 peripherals.I2C0,
                 peripherals.GPIO21,
                 peripherals.GPIO19,
                 [0x26, 0x27],
+                &spawner,
+            )
+            .await;
+            Extension::init(
+                peripherals.I2C1,
+                peripherals.GPIO25.degrade(),
+                peripherals.GPIO26.degrade(),
+                peripherals.GPIO5.degrade(),
+                peripherals.GPIO15.degrade(),
+                None,
+                &spawner,
+            )
+            .await;
+        }
+        (Some(DeviceType::Relais), Some(1)) => {
+            Button::init(
+                peripherals.GPIO33,
+                peripherals.GPIO35,
+                peripherals.GPIO12,
+                peripherals.GPIO34,
+                &spawner,
+            );
+            Extension::init(
+                peripherals.I2C1,
+                peripherals.GPIO15.degrade(),
+                peripherals.GPIO16.degrade(),
+                peripherals.GPIO17.degrade(),
+                peripherals.GPIO18.degrade(),
+                Some((peripherals.GPIO5.degrade(), peripherals.GPIO2.degrade())),
                 &spawner,
             )
             .await;
@@ -75,6 +106,16 @@ async fn main(spawner: Spawner) -> ! {
                 peripherals.GPIO34,
                 &spawner,
             );
+            Extension::init(
+                peripherals.I2C1,
+                peripherals.GPIO4.degrade(),
+                peripherals.GPIO16.degrade(),
+                peripherals.GPIO17.degrade(),
+                peripherals.GPIO18.degrade(),
+                Some((peripherals.GPIO5.degrade(), peripherals.GPIO2.degrade())),
+                &spawner,
+            )
+            .await;
         }
         (Some(DeviceType::Button), Some(2)) => {
             Button::init(
@@ -84,6 +125,16 @@ async fn main(spawner: Spawner) -> ! {
                 peripherals.GPIO15,
                 &spawner,
             );
+            Extension::init(
+                peripherals.I2C1,
+                peripherals.GPIO4.degrade(),
+                peripherals.GPIO16.degrade(),
+                peripherals.GPIO17.degrade(),
+                peripherals.GPIO18.degrade(),
+                None,
+                &spawner,
+            )
+            .await;
         }
 
         (_, _) => {}
