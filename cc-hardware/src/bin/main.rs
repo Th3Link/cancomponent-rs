@@ -23,13 +23,6 @@ use esp_hal::timer::timg::TimerGroup;
 use esp_hal_embassy::main;
 use esp_println::println;
 
-/*struct ExtensionGpio {
-    pin0: Pin + 'static,
-    pin1: Pin + 'static,
-    pin2: Pin + 'static,
-    pin3: Pin + 'static,
-}*/
-
 #[main]
 async fn main(spawner: Spawner) -> ! {
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::_80MHz));
@@ -80,13 +73,35 @@ async fn main(spawner: Spawner) -> ! {
             .await;
         }
         (Some(DeviceType::Relais), Some(1)) => {
-            Button::init(
-                peripherals.GPIO33,
-                peripherals.GPIO35,
-                peripherals.GPIO12,
-                peripherals.GPIO34,
+            Relais::init(
+                peripherals.I2C0,
+                peripherals.GPIO21,
+                peripherals.GPIO19,
+                [0x26, 0x27],
                 &spawner,
-            );
+            )
+            .await;
+            Extension::init(
+                peripherals.I2C1,
+                peripherals.GPIO15.degrade(),
+                peripherals.GPIO16.degrade(),
+                peripherals.GPIO17.degrade(),
+                peripherals.GPIO18.degrade(),
+                Some((peripherals.GPIO5.degrade(), peripherals.GPIO2.degrade())),
+                &spawner,
+            )
+            .await;
+        }
+
+        (Some(DeviceType::Rollershutter), Some(1)) => {
+            Relais::init(
+                peripherals.I2C0,
+                peripherals.GPIO21,
+                peripherals.GPIO19,
+                [0x26, 0x27],
+                &spawner,
+            )
+            .await;
             Extension::init(
                 peripherals.I2C1,
                 peripherals.GPIO15.degrade(),
@@ -147,27 +162,7 @@ async fn main(spawner: Spawner) -> ! {
     can::send_can_message(CanMessageType::Available, &data, false).await;
 
     echo_guard::init(&spawner).await;
-    /*
-        if let Some(extension) = config()
-            .await
-            .get_u8(config::Key::ExtensionMode)
-            .await
-            .and_then(|v| Extension::try_from(v).ok())
-        {
-            match extension {
-                Extension::Relais => {}
-                Extension::Button => Button::init(
-                    peripherals.GPIO25,
-                    peripherals.GPIO26,
-                    peripherals.GPIO5,
-                    peripherals.GPIO15,
-                    &spawner,
-                ),
-                Extension::Pwm => {}
-                Extension::Sensors => {}
-            }
-        }
-    */
+
     loop {
         Timer::after(Duration::from_millis(3_000)).await;
     }

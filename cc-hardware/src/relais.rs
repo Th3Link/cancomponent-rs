@@ -140,6 +140,10 @@ impl Relais {
                 self.expanders[expander], self.bank_addr[expander]
             );
             self.i2c
+                .write_async(self.bank_addr[expander], &[0x3, 0x0])
+                .await
+                .ok();
+            self.i2c
                 .write_async(self.bank_addr[expander], &[0x1, self.expanders[expander]])
                 .await
                 .inspect_err(|e| println!("{e}"))

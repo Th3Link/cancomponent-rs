@@ -36,6 +36,22 @@ pub async fn init(_spawner: &Spawner) {
         let update = Update {};
         *update_guard = Some(update);
     }
+
+    match Ota::new(FlashStorage::new()) {
+        Ok(mut ota) => {
+            ota.ota_mark_app_valid().ok();
+        }
+        Err(_) => {
+            ErrorReport::send(
+                Component::Ota,
+                ErrorCode::Unknown,
+                Severity::RecoverableError,
+                UpdateErrorCode::Init as u8,
+                &[0u8, 0u8, 0u8],
+            )
+            .await;
+        }
+    }
 }
 
 pub async fn update(
