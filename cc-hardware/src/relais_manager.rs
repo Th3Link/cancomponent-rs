@@ -81,7 +81,9 @@ impl<const N: usize> RelayManager<N> {
                     scheduled: None,
                 };
                 relay.update(now, state.clone(), duration);
-                entry.insert(relay).unwrap();
+                if entry.insert(relay).is_err() {
+                    return false;
+                }
                 changed = true;
             }
         }

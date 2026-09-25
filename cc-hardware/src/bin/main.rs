@@ -23,6 +23,13 @@ use esp_hal::timer::timg::TimerGroup;
 use esp_hal_embassy::main;
 use esp_println::println;
 
+use core::panic::PanicInfo;
+
+#[panic_handler]
+fn panic(_info: &PanicInfo) -> ! {
+    esp_hal::system::software_reset();
+}
+
 #[main]
 async fn main(spawner: Spawner) -> ! {
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::_80MHz));
