@@ -43,9 +43,9 @@ pub struct Message {
 }
 
 impl Message {
-    pub fn from_bytes(data: &[u8]) -> Result<Self, ()> {
+    pub fn from_bytes(data: &[u8]) -> Result<Self, crate::DecodeError> {
         if data.len() < 6 {
-            return Err(());
+            return Err(crate::DecodeError);
         }
 
         let num = data[0] as usize;

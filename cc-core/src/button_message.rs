@@ -49,13 +49,13 @@ impl ButtonMessage {
         ButtonMessage { num, state, count }
     }
 
-    pub fn from_bytes(data: &[u8]) -> Result<Self, ()> {
+    pub fn from_bytes(data: &[u8]) -> Result<Self, crate::DecodeError> {
         if data.len() < 4 {
-            return Err(());
+            return Err(crate::DecodeError);
         }
 
         let num = data[0] as usize;
-        let state: ButtonState = ButtonState::try_from(data[1]).map_err(|_| ())?;
+        let state: ButtonState = ButtonState::try_from(data[1]).map_err(|_| crate::DecodeError)?;
         let count = u16::from_be_bytes([data[2], data[3]]);
         Ok(ButtonMessage { num, state, count })
     }

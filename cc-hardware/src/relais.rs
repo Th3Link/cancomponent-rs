@@ -29,7 +29,7 @@ static RELAIS_CHANNEL: Channel<CriticalSectionRawMutex, Message, MAX_RELAIS> = C
 pub async fn relais_handler(_id: CanId, data: &[u8], _remote_request: bool) {
     match Message::from_bytes(data) {
         Ok(msg) => RELAIS_CHANNEL.send(msg).await,
-        Err(()) => {
+        Err(_) => {
             report_error(
                 Component::Relais,
                 ErrorCode::InvalidData,
