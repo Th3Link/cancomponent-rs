@@ -27,13 +27,14 @@ embassy-futures     = { version = "0.1" }
 embassy-embedded-hal = { version = "0.6" }
 esp-rtos            = { version = "0.4", features = ["esp32", "embassy"] }
 embedded-can        = { version = "0.4" }
-embedded-io-async   = { version = "0.6.1" }
+embedded-io-async   = { version = "0.7" }
 embedded-storage    = { version = "0.3" }
 static_cell         = { version = "2.1", features = ["nightly"] }
 heapless            = { version = "0.9" }
 async-trait         = { version = "0.1" }
 sequential-storage  = { version = "8.0" }
-noline              = { version = "0.5" }
+bareminal_cli       = { version = "0.3", default-features = false, features = ["async-no-std"] }
+bareminal_macros    = { version = "0.3" }
 num_enum            = { version = "0.7", default-features = false }
 cancomponents-core  = { path = "../cc-core/" }
 thiserror           = { version = "2", default-features = false }
