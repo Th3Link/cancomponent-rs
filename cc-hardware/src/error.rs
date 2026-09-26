@@ -11,7 +11,7 @@ pub use cancomponents_core::error::{Component, ErrorCode, ErrorReport, Severity}
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Instant};
-use heapless::FnvIndexMap;
+use heapless::index_map::FnvIndexMap;
 
 type ErrorKey = (Component, ErrorCode, u8);
 

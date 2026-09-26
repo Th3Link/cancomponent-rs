@@ -25,7 +25,7 @@ fn create_esp32_image() {
 }
 
 fn vergen() -> Result<(), Box<dyn std::error::Error>> {
-    let git2 = vergen_git2::Git2Builder::all_git()?;
+    let git2 = vergen_git2::Git2::all_git();
     vergen_git2::Emitter::default()
         .add_instructions(&git2)?
         .emit()?;
