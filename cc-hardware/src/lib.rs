@@ -12,6 +12,7 @@ pub mod device;
 pub mod echo_guard;
 pub mod error;
 pub mod extension;
+pub mod flash;
 pub mod gpio_interrupt;
 pub mod logging;
 pub mod pwm;

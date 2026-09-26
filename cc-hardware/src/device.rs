@@ -1,7 +1,6 @@
-use crate::console_log;
-
 use crate::can::{send_can_message, DEVICE_ID, DEVICE_TYPE};
 use crate::config::{self, config};
+use crate::console_log;
 use crate::error::{report_error, Component, ErrorCode, Severity};
 use cancomponents_core::can_id::CanId;
 use cancomponents_core::can_message_type::CanMessageType;
@@ -9,7 +8,7 @@ use cancomponents_core::device_message::parse_id_type;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
 use embassy_time::Instant;
-use esp_hal::efuse::Efuse;
+use esp_hal::efuse;
 use heapless::String;
 
 /// Global device identity/config-mirroring state (custom string, MAC-derived
@@ -26,7 +25,8 @@ pub async fn init() {
     let mut device_guard = DEVICE.lock().await;
 
     if device_guard.is_none() {
-        let mac = Efuse::read_base_mac_address();
+        let mac = efuse::base_mac_address();
+        let mac = mac.as_bytes();
         let mac = u64::from_be_bytes([0, 0, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]]);
         let mut config = config().await;
         let device = Device {

@@ -10,6 +10,7 @@ use cancomponents::console_log;
 use cancomponents::device;
 use cancomponents::echo_guard;
 use cancomponents::extension::Extension;
+use cancomponents::flash;
 use cancomponents::gpio_interrupt;
 use cancomponents::relais::Relais;
 use cancomponents::update;
@@ -22,7 +23,6 @@ use esp_backtrace as _;
 use esp_hal::clock::CpuClock;
 use esp_hal::gpio::Pin;
 use esp_hal::timer::timg::TimerGroup;
-use esp_hal_embassy::main;
 
 use core::panic::PanicInfo;
 
@@ -31,13 +31,14 @@ fn panic(_info: &PanicInfo) -> ! {
     esp_hal::system::software_reset();
 }
 
-#[main]
+#[esp_hal::main]
 async fn main(spawner: Spawner) -> ! {
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::_80MHz));
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
-    esp_hal_embassy::init(timg0.timer0);
+    esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
 
+    flash::init(peripherals.FLASH);
     config::init().await;
     device::init().await;
     update::init(&spawner).await;

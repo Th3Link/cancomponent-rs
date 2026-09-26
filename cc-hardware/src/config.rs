@@ -2,12 +2,12 @@
 //! raw flash (the `CONFIG_PARTITION` range, separate from the OTA app
 //! partitions).
 
+use crate::flash::SharedFlash;
 use core::ops::Range;
 use core::result::Result;
 use embassy_embedded_hal::adapter::BlockingAsync;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
-use esp_storage::FlashStorage;
 use heapless::String;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use sequential_storage::cache::NoCache;
@@ -53,7 +53,7 @@ pub async fn config(
 }
 
 pub struct Config {
-    flash: BlockingAsync<FlashStorage>,
+    flash: BlockingAsync<SharedFlash>,
     buffer: [u8; 256],
     cache: NoCache,
 }
@@ -67,7 +67,7 @@ impl Default for Config {
 impl Config {
     pub fn new() -> Self {
         Self {
-            flash: BlockingAsync::new(FlashStorage::new()),
+            flash: BlockingAsync::new(SharedFlash),
             buffer: [0; 256],
             cache: NoCache::new(),
         }

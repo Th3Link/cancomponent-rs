@@ -8,6 +8,7 @@
 //! CAN sends.
 
 use crate::can::send_can_message;
+use crate::console_log;
 use crate::gpio_interrupt::register_gpio_handler;
 use crate::gpio_interrupt::GpioChannel;
 use cancomponents_core::button_fsm::{ButtonEdge, ButtonFsm};
@@ -20,7 +21,6 @@ use esp_hal::gpio::Event;
 use esp_hal::gpio::Input;
 use esp_hal::gpio::InputConfig;
 use esp_hal::gpio::Pull;
-use crate::console_log;
 
 const DEBOUNCE_TIME: Duration = Duration::from_millis(10);
 const MULTI_CLICK_MAX: Duration = Duration::from_millis(200); // window to catch a follow-up click
@@ -57,10 +57,10 @@ impl Button {
         let ch2 = register_gpio_handler(button2).unwrap();
         let ch3 = register_gpio_handler(button3).unwrap();
 
-        spawner.spawn(run(0, ch0)).unwrap();
-        spawner.spawn(run(1, ch1)).unwrap();
-        spawner.spawn(run(2, ch2)).unwrap();
-        spawner.spawn(run(3, ch3)).unwrap();
+        spawner.spawn(run(0, ch0).unwrap());
+        spawner.spawn(run(1, ch1).unwrap());
+        spawner.spawn(run(2, ch2).unwrap());
+        spawner.spawn(run(3, ch3).unwrap());
     }
 
     /// Waits for (and debounces) one GPIO edge, races it against the

@@ -4,14 +4,14 @@
 //! tool) expects: `start` carries a CRC32 + size, `write` streams raw
 //! firmware bytes buffered until a chunk boundary or `FlashComplete`, at
 //! which point the image is verified and the device reboots into it.
+use crate::console_log;
 use crate::error::{report_error, Component, ErrorCode, Severity};
+use crate::flash::SharedFlash;
 use cancomponents_core::can_id::CanId;
 use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
 use esp_hal_ota::Ota;
-use crate::console_log;
-use esp_storage::FlashStorage;
 use heapless::Vec;
 use num_enum::FromPrimitive;
 
@@ -21,7 +21,7 @@ const OTA_BUFFER_SIZE: usize = 4096;
 static CURRENT_BUFFER: Mutex<CriticalSectionRawMutex, Vec<u8, OTA_BUFFER_SIZE>> =
     Mutex::new(Vec::new());
 static UPDATE: Mutex<CriticalSectionRawMutex, Option<Update>> = Mutex::new(None);
-static OTA: Mutex<CriticalSectionRawMutex, Option<Ota<FlashStorage>>> = Mutex::new(None);
+static OTA: Mutex<CriticalSectionRawMutex, Option<Ota<SharedFlash>>> = Mutex::new(None);
 
 /// `local_code` values reported alongside `Component::Ota`/`Component::Update`
 /// `DeviceError`s, distinguishing where in the OTA flow something failed.
@@ -48,7 +48,7 @@ pub async fn init(_spawner: &Spawner) {
         *update_guard = Some(update);
     }
 
-    match Ota::new(FlashStorage::new()) {
+    match Ota::new(SharedFlash) {
         Ok(mut ota) => {
             ota.ota_mark_app_valid().ok();
         }
@@ -93,7 +93,7 @@ impl Update {
         let crc = u32::from_be_bytes(data[0..4].try_into().unwrap());
         console_log!("start update: crc {crc} size {size}");
 
-        match Ota::new(FlashStorage::new()) {
+        match Ota::new(SharedFlash) {
             Ok(mut ota) => {
                 if ota.ota_begin(size, crc).is_ok() {
                     let next_ota = ota.get_next_ota_partition();

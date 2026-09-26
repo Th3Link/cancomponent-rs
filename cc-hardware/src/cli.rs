@@ -67,7 +67,7 @@ pub async fn init(
         .with_tx(tx)
         .into_async();
 
-    spawner.spawn(console_task(uart)).unwrap();
+    spawner.spawn(console_task(uart).unwrap());
 }
 
 #[embassy_executor::task]
@@ -198,7 +198,10 @@ async fn cmd_show(uart: &mut uart::Uart<'static, Async>) {
 
     let mut cfg = config().await;
     let hwrev = cfg.get_u8(config::Key::HardwareRevision).await;
-    let relais_mode = cfg.get_u8(config::Key::RelaisMode).await.map(RelaisMode::from);
+    let relais_mode = cfg
+        .get_u8(config::Key::RelaisMode)
+        .await
+        .map(RelaisMode::from);
     let extension_mode = cfg
         .get_u8(config::Key::ExtensionMode)
         .await
@@ -207,9 +210,17 @@ async fn cmd_show(uart: &mut uart::Uart<'static, Async>) {
     drop(cfg);
 
     respond(uart, &fmt_msg(format_args!("device_id: {device_id}\r\n"))).await;
-    respond(uart, &fmt_msg(format_args!("device_type: {device_type}\r\n"))).await;
+    respond(
+        uart,
+        &fmt_msg(format_args!("device_type: {device_type}\r\n")),
+    )
+    .await;
     respond(uart, &fmt_msg(format_args!("hwrev: {hwrev:?}\r\n"))).await;
-    respond(uart, &fmt_msg(format_args!("relais_mode: {relais_mode:?}\r\n"))).await;
+    respond(
+        uart,
+        &fmt_msg(format_args!("relais_mode: {relais_mode:?}\r\n")),
+    )
+    .await;
     respond(
         uart,
         &fmt_msg(format_args!("extension_mode: {extension_mode:?}\r\n")),
@@ -219,14 +230,23 @@ async fn cmd_show(uart: &mut uart::Uart<'static, Async>) {
         Some(s) => respond(uart, &fmt_msg(format_args!("custom_string: {s}\r\n"))).await,
         None => respond(uart, "custom_string: (unset)\r\n").await,
     }
-    respond(uart, &fmt_msg(format_args!("uptime: {uptime_minutes} min\r\n"))).await;
+    respond(
+        uart,
+        &fmt_msg(format_args!("uptime: {uptime_minutes} min\r\n")),
+    )
+    .await;
 }
 
 async fn cmd_device_id(args: &[&str]) -> String<LINE_CAP> {
     let Some(id) = args.first().and_then(|t| u8::from_str(t).ok()) else {
         return str_msg("usage: device_id <u8>\r\n");
     };
-    if config().await.set_u8(config::Key::DeviceId, id).await.is_err() {
+    if config()
+        .await
+        .set_u8(config::Key::DeviceId, id)
+        .await
+        .is_err()
+    {
         return str_msg("failed to persist device_id\r\n");
     }
     *DEVICE_ID.lock().await = id;
@@ -265,7 +285,9 @@ async fn cmd_hwrev(args: &[&str]) -> String<LINE_CAP> {
     {
         return str_msg("failed to persist hwrev\r\n");
     }
-    fmt_msg(format_args!("hwrev set to {rev} (takes effect after restart)\r\n"))
+    fmt_msg(format_args!(
+        "hwrev set to {rev} (takes effect after restart)\r\n"
+    ))
 }
 
 async fn cmd_custom_string(args: &[&str]) -> String<LINE_CAP> {

@@ -2,6 +2,7 @@
 //! the per-message-type handlers, and the send queue.
 
 use crate::config;
+use crate::console_log;
 use crate::device::device;
 use crate::echo_guard::{disable_echo, dispatch_echo};
 use crate::relais::relais_handler;
@@ -18,7 +19,6 @@ use esp_hal::gpio::{InputPin, OutputPin};
 use esp_hal::twai::filter::DualExtendedFilter;
 use esp_hal::twai::{self, EspTwaiFrame, TimingConfig, TwaiMode};
 use esp_hal::Async;
-use crate::console_log;
 use heapless::String;
 
 /// Outgoing frames queued by [`send_can_message`], drained by [`can_send_task`].
@@ -82,8 +82,8 @@ pub async fn init(
     }
     let (rx, tx) = twai.split();
 
-    spawner.spawn(can_send_task(tx)).unwrap();
-    spawner.spawn(can_recieve_task(rx)).unwrap();
+    spawner.spawn(can_send_task(tx).unwrap());
+    spawner.spawn(can_recieve_task(rx).unwrap());
 }
 
 /// Routes one received frame to the handler for its `msg_type`, after

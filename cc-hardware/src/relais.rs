@@ -4,6 +4,7 @@
 
 use crate::can::send_can_message;
 use crate::config::{self, config};
+use crate::console_log;
 use crate::error::{report_error, Component, ErrorCode, Severity};
 use cancomponents_core::can_id::CanId;
 use cancomponents_core::can_message_type::CanMessageType;
@@ -14,10 +15,9 @@ use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Instant, Timer};
-use esp_hal::gpio::interconnect::PeripheralOutput;
+use esp_hal::gpio::interconnect::{PeripheralInput, PeripheralOutput};
 use esp_hal::i2c::master::{Config, I2c};
 use esp_hal::Async;
-use crate::console_log;
 
 const MAX_RELAIS: usize = 16;
 
@@ -62,8 +62,8 @@ impl Relais {
     /// i.e. all relays off) and spawns the task that drives them.
     pub async fn init(
         i2c0: esp_hal::peripherals::I2C0<'static>,
-        sda: impl PeripheralOutput<'static>,
-        scl: impl PeripheralOutput<'static>,
+        sda: impl PeripheralInput<'static> + PeripheralOutput<'static>,
+        scl: impl PeripheralInput<'static> + PeripheralOutput<'static>,
         bank_addr: [u8; 2],
         spawner: &Spawner,
     ) {
@@ -92,7 +92,7 @@ impl Relais {
             relais_mode,
         };
 
-        spawner.spawn(relais_task(relais)).unwrap();
+        spawner.spawn(relais_task(relais).unwrap());
     }
     /// Logical relay number -> (expander index 0/1, output bit 0-7).
     /// Indices 12-15 are unused on current hardware and map to a harmless
@@ -176,7 +176,8 @@ impl Relais {
             }
             console_log!(
                 "write {} to {}",
-                self.expanders[expander], self.bank_addr[expander]
+                self.expanders[expander],
+                self.bank_addr[expander]
             );
             self.i2c
                 .write_async(self.bank_addr[expander], &[0x3, 0x0])

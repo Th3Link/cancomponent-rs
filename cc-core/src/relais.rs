@@ -52,7 +52,8 @@ impl Message {
         let state: State = State::from(data[1]);
         // Only the low 3 bytes belong to `duration` — the 4th byte of this
         // slot is `bank` (see `to_bytes`), so it must not be folded in here.
-        let duration = Duration::from_millis(u32::from_le_bytes([data[2], data[3], data[4], 0]) as u64);
+        let duration =
+            Duration::from_millis(u32::from_le_bytes([data[2], data[3], data[4], 0]) as u64);
         let bank = data[5];
 
         Ok(Message {

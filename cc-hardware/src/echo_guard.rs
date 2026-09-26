@@ -5,13 +5,13 @@
 //! the bus is [`crate::can::SILENCE`]d (see [`disable_echo`]/`can::silence`).
 
 use crate::can::send_can_message;
+use crate::console_log;
 use cancomponents_core::can_message_type::CanMessageType;
 use embassy_executor::Spawner;
 use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
-use crate::console_log;
 
 const MAX_ECHO_MISS: usize = 3;
 const ECHO_INTERVALL: Duration = Duration::from_secs(30);
@@ -21,7 +21,7 @@ const ECHO_INTERVALL: Duration = Duration::from_secs(30);
 pub static ECHO_CHANNEL: Channel<CriticalSectionRawMutex, bool, 2> = Channel::new();
 
 pub async fn init(spawner: &Spawner) {
-    spawner.spawn(echo_guard_task()).unwrap();
+    spawner.spawn(echo_guard_task().unwrap());
 }
 
 /// Signals that `Echo` traffic was observed, resetting the miss counter.
