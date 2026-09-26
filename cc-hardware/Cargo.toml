@@ -27,10 +27,12 @@ embassy-futures     = { version = "0.1" }
 embassy-embedded-hal = { version = "0.3" }
 esp-hal-embassy     = { version = "0.8", features = ["esp32"] }
 embedded-can        = { version = "0.4" }
+embedded-io-async   = { version = "0.6.1" }
 static_cell         = { version = "2.1", features = ["nightly"] }
 heapless            = { version = "0.8" }
 async-trait         = { version = "0.1" }
 sequential-storage  = { version = "4.0" }
+noline              = { version = "0.5" }
 num_enum            = { version = "0.7", default-features = false }
 cancomponents-core  = { path = "../cc-core/" }
 thiserror           = { version = "2", default-features = false }

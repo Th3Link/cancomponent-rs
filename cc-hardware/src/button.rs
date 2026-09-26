@@ -1,7 +1,16 @@
+//! Drives up to 4 physical buttons: debounces GPIO edges, races them against
+//! state-specific timeouts, and reports the result over CAN.
+//!
+//! The press/hold/multi-click decision logic itself lives in
+//! `cancomponents_core::button_fsm::ButtonFsm` (pure, unit-tested); this
+//! module only owns the timing/hardware side — which timeout to race a
+//! given state against, and turning the FSM's decisions into GPIO setup and
+//! CAN sends.
+
 use crate::can::send_can_message;
 use crate::gpio_interrupt::register_gpio_handler;
 use crate::gpio_interrupt::GpioChannel;
-use cancomponents_core::button_message::ButtonMessage;
+use cancomponents_core::button_fsm::{ButtonEdge, ButtonFsm};
 use cancomponents_core::button_message::ButtonState;
 use cancomponents_core::can_message_type::CanMessageType;
 use embassy_executor::Spawner;
@@ -11,20 +20,20 @@ use esp_hal::gpio::Event;
 use esp_hal::gpio::Input;
 use esp_hal::gpio::InputConfig;
 use esp_hal::gpio::Pull;
-use esp_println::println;
+use crate::console_log;
 
-const DEBOUNCE_TIME: Duration = Duration::from_millis(10); // Entprellzeit
-const MULTI_CLICK_MAX: Duration = Duration::from_millis(200); // Zeitfenster für Double/Triple/Quad
-const HOLD_THRESHOLD: Duration = Duration::from_millis(800); // Ab wann "Hold"
-const HOLD_REPEAT: Duration = Duration::from_millis(1000); // Ab wann "Hold"
+const DEBOUNCE_TIME: Duration = Duration::from_millis(10);
+const MULTI_CLICK_MAX: Duration = Duration::from_millis(200); // window to catch a follow-up click
+const HOLD_THRESHOLD: Duration = Duration::from_millis(800); // press duration that counts as "hold"
+const HOLD_REPEAT: Duration = Duration::from_millis(1000); // repeat interval while held
 
 pub struct Button {
-    clicks: u16,
-    hold_repeat: u16,
-    state: ButtonState,
+    fsm: ButtonFsm,
 }
 
 impl Button {
+    /// Configures 4 GPIOs as pulled-up, edge-interrupt inputs and spawns one
+    /// `run` task per button.
     pub fn init(
         button0: impl esp_hal::gpio::InputPin + 'static,
         button1: impl esp_hal::gpio::InputPin + 'static,
@@ -54,99 +63,71 @@ impl Button {
         spawner.spawn(run(3, ch3)).unwrap();
     }
 
+    /// Waits for (and debounces) one GPIO edge, races it against the
+    /// current FSM state's timeout (if any), and sends whatever
+    /// [`ButtonFsm`] decides to emit.
     pub async fn iterate(&mut self, index: usize, channel: &GpioChannel) {
         let debounce_time = Timer::after(DEBOUNCE_TIME);
         let next_state = channel.receive();
         match select(next_state, debounce_time).await {
             Either::First(_) => {
-                //bounces
+                // bounced, discard and retry
                 return;
             }
             Either::Second(_) => {
-                // debounced go on
+                // debounced, go on
             }
         }
 
-        match self.state {
-            ButtonState::Released => {
-                let next_state = channel.receive().await;
-                if next_state {
-                    self.state = ButtonState::Pressed;
-                    let bm = ButtonMessage::new(index, ButtonState::Pressed, 0);
-                    send_can_message(CanMessageType::ButtonEvent, &bm.to_bytes(), false).await;
-                }
+        let prev_state = self.fsm.state();
+        let message = if prev_state == ButtonState::Released {
+            // No timeout to race: a released button only ever reacts to an
+            // edge.
+            let pressed = channel.receive().await;
+            self.fsm.on_edge(edge(pressed))
+        } else {
+            let timeout = match prev_state {
+                ButtonState::Pressed => HOLD_THRESHOLD,
+                ButtonState::Hold => HOLD_REPEAT,
+                _ => MULTI_CLICK_MAX,
+            };
+            match select(channel.receive(), Timer::after(timeout)).await {
+                Either::First(pressed) => self.fsm.on_edge(edge(pressed)),
+                Either::Second(_) => self.fsm.on_timeout(),
             }
-            ButtonState::Pressed => {
-                let hold_threshold = Timer::after(HOLD_THRESHOLD);
-                let next_state = channel.receive();
-                match select(next_state, hold_threshold).await {
-                    Either::First(_) => {
-                        self.clicks += 1;
-                        self.state = ButtonState::Multi;
-                    }
-                    Either::Second(_) => {
-                        self.state = ButtonState::Hold;
-                        let bm = ButtonMessage::new(index, ButtonState::Hold, 0);
-                        send_can_message(CanMessageType::ButtonEvent, &bm.to_bytes(), false).await;
-                        println!("Button {index}: hold");
-                    }
+        };
+
+        if let Some(msg) = message {
+            match (prev_state, msg.state) {
+                (ButtonState::Pressed, ButtonState::Hold) => console_log!("Button {index}: hold"),
+                (ButtonState::Hold, ButtonState::Hold) => {
+                    console_log!("Button {index}: hold_repeat {}", msg.count)
                 }
-            }
-            ButtonState::Hold => {
-                let hold_repeat = Timer::after(HOLD_REPEAT);
-                let next_state = channel.receive();
-                match select(next_state, hold_repeat).await {
-                    Either::First(_) => {
-                        self.state = ButtonState::Released;
-                        let bm = ButtonMessage::new(index, ButtonState::Released, 0);
-                        send_can_message(CanMessageType::ButtonEvent, &bm.to_bytes(), false).await;
-                        println!("Button {index}: hold released");
-                        self.hold_repeat = 0;
-                    }
-                    Either::Second(_) => {
-                        self.hold_repeat += 1;
-                        let bm = ButtonMessage::new(index, ButtonState::Hold, self.hold_repeat);
-                        send_can_message(CanMessageType::ButtonEvent, &bm.to_bytes(), false).await;
-                        println!("Button {index}: hold_repeat {}", self.hold_repeat);
-                    }
+                (ButtonState::Hold, ButtonState::Released) => {
+                    console_log!("Button {index}: hold released")
                 }
-            }
-            ButtonState::Multi => {
-                let hold_repeat = Timer::after(MULTI_CLICK_MAX);
-                let next_state = channel.receive();
-                match select(next_state, hold_repeat).await {
-                    Either::First(s) => {
-                        if s {
-                            self.clicks += 1;
-                            let bm = ButtonMessage::new(index, ButtonState::Pressed, 0);
-                            send_can_message(CanMessageType::ButtonEvent, &bm.to_bytes(), false)
-                                .await;
-                        } else {
-                            let bm = ButtonMessage::new(index, ButtonState::Released, 0);
-                            send_can_message(CanMessageType::ButtonEvent, &bm.to_bytes(), false)
-                                .await;
-                        }
-                    }
-                    Either::Second(_) => {
-                        self.state = ButtonState::Released;
-                        println!("Button {index}: multi press {}", self.clicks);
-                        let bm = ButtonMessage::new(index, ButtonState::Multi, self.clicks);
-                        send_can_message(CanMessageType::ButtonEvent, &bm.to_bytes(), false).await;
-                        self.clicks = 0;
-                    }
+                (ButtonState::Multi, ButtonState::Multi) => {
+                    console_log!("Button {index}: multi press {}", msg.count)
                 }
+                _ => {}
             }
-            _ => {}
+            send_can_message(CanMessageType::ButtonEvent, &msg.to_bytes(), false).await;
         }
+    }
+}
+
+fn edge(pressed: bool) -> ButtonEdge {
+    if pressed {
+        ButtonEdge::Pressed
+    } else {
+        ButtonEdge::Released
     }
 }
 
 #[embassy_executor::task(pool_size = 4)]
 pub async fn run(index: usize, channel: &'static GpioChannel) {
     let mut button = Button {
-        clicks: 0,
-        hold_repeat: 0,
-        state: ButtonState::Released,
+        fsm: ButtonFsm::new(index),
     };
     loop {
         button.iterate(index, channel).await;

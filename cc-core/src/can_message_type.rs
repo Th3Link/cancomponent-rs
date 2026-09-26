@@ -1,5 +1,11 @@
 use num_enum::{FromPrimitive, IntoPrimitive};
 
+/// The `msg_type` byte of a [`crate::can_id::CanId`] — identifies what a
+/// CAN frame's payload means.
+///
+/// This is a fixed wire-protocol enum: the discriminants are the actual
+/// bytes sent on the bus and must never be renumbered. New message types
+/// may be appended with unused values; existing ones must not change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, IntoPrimitive, FromPrimitive)]
 #[repr(u8)]
 pub enum CanMessageType {

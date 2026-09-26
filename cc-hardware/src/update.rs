@@ -1,21 +1,30 @@
-use crate::error::{Component, ErrorCode, ErrorReport, Severity};
+//! OTA firmware update over CAN (`FlashStart`/`FlashWrite`/`FlashComplete`/...).
+//!
+//! Wire protocol is fixed and mirrors what a bus master (e.g. a flashing
+//! tool) expects: `start` carries a CRC32 + size, `write` streams raw
+//! firmware bytes buffered until a chunk boundary or `FlashComplete`, at
+//! which point the image is verified and the device reboots into it.
+use crate::error::{report_error, Component, ErrorCode, Severity};
 use cancomponents_core::can_id::CanId;
 use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
 use esp_hal_ota::Ota;
-use esp_println::println;
+use crate::console_log;
 use esp_storage::FlashStorage;
 use heapless::Vec;
 use num_enum::FromPrimitive;
 
-// Buffer-Größe als Konstanto
 const OTA_BUFFER_SIZE: usize = 4096;
+/// Bytes received via `FlashWrite` accumulate here until a full chunk (or
+/// `FlashComplete`) triggers `ota_write_chunk`.
 static CURRENT_BUFFER: Mutex<CriticalSectionRawMutex, Vec<u8, OTA_BUFFER_SIZE>> =
     Mutex::new(Vec::new());
 static UPDATE: Mutex<CriticalSectionRawMutex, Option<Update>> = Mutex::new(None);
 static OTA: Mutex<CriticalSectionRawMutex, Option<Ota<FlashStorage>>> = Mutex::new(None);
 
+/// `local_code` values reported alongside `Component::Ota`/`Component::Update`
+/// `DeviceError`s, distinguishing where in the OTA flow something failed.
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, FromPrimitive)]
 pub enum UpdateErrorCode {
@@ -29,6 +38,8 @@ pub enum UpdateErrorCode {
     VerifyFailed = 6,
 }
 
+/// Marks the currently-running app partition valid (confirming a prior OTA
+/// update didn't need a rollback) and prepares the `Update` singleton.
 pub async fn init(_spawner: &Spawner) {
     let mut update_guard = UPDATE.lock().await;
 
@@ -42,7 +53,7 @@ pub async fn init(_spawner: &Spawner) {
             ota.ota_mark_app_valid().ok();
         }
         Err(_) => {
-            ErrorReport::send(
+            report_error(
                 Component::Ota,
                 ErrorCode::Unknown,
                 Severity::RecoverableError,
@@ -63,9 +74,11 @@ pub async fn update(
 pub struct Update {}
 
 impl Update {
+    /// Handles `FlashStart`: payload is `[crc32(be), size(be)]` (8 bytes),
+    /// begins an OTA write to the inactive partition.
     pub async fn start(&mut self, id: CanId, data: &[u8], _remote_request: bool) {
         if data.len() < 8 {
-            ErrorReport::send(
+            report_error(
                 Component::Update,
                 ErrorCode::InvalidData,
                 Severity::Warning,
@@ -78,17 +91,17 @@ impl Update {
 
         let size = u32::from_be_bytes(data[4..8].try_into().unwrap());
         let crc = u32::from_be_bytes(data[0..4].try_into().unwrap());
-        println!("start update: crc {crc} size {size}");
+        console_log!("start update: crc {crc} size {size}");
 
         match Ota::new(FlashStorage::new()) {
             Ok(mut ota) => {
                 if ota.ota_begin(size, crc).is_ok() {
                     let next_ota = ota.get_next_ota_partition();
-                    println!("next ota part: {next_ota:?}");
+                    console_log!("next ota part: {next_ota:?}");
                     *OTA.lock().await = Some(ota);
                 } else {
                     // ota_begin fehlgeschlagen
-                    ErrorReport::send(
+                    report_error(
                         Component::Ota,
                         ErrorCode::Unknown,
                         Severity::RecoverableError,
@@ -100,7 +113,7 @@ impl Update {
                 }
             }
             Err(_) => {
-                ErrorReport::send(
+                report_error(
                     Component::Ota,
                     ErrorCode::Unknown,
                     Severity::RecoverableError,
@@ -113,6 +126,11 @@ impl Update {
             }
         }
     }
+    /// Handles `FlashWrite`/`FlashComplete`: buffers raw firmware bytes and
+    /// flushes to flash once `OTA_BUFFER_SIZE` is reached or `force_flush`
+    /// (i.e. this is the final `FlashComplete` chunk) is set — at which
+    /// point the image is verified and, on success, the device reboots
+    /// into it.
     pub async fn write(
         &mut self,
         _id: CanId,
@@ -130,20 +148,20 @@ impl Update {
         };
 
         if should_flush {
-            println!("write chunk");
+            console_log!("write chunk");
             let mut ota_guard = OTA.lock().await;
             if let Some(ref mut ota) = *ota_guard {
                 match ota.ota_write_chunk(&buffer) {
                     Ok(true) => {
-                        println!("last chunk");
+                        console_log!("last chunk");
                         if ota
                             .ota_flush(true, true)
                             .inspect_err(|e| {
-                                println!("{e:?}");
+                                console_log!("{e:?}");
                             })
                             .is_err()
                         {
-                            ErrorReport::send(
+                            report_error(
                                 Component::Update,
                                 ErrorCode::InvalidData,
                                 Severity::Warning,
@@ -159,8 +177,8 @@ impl Update {
                         // continue writing
                     }
                     Err(e) => {
-                        println!("Write failed: {:?}", e);
-                        ErrorReport::send(
+                        console_log!("Write failed: {:?}", e);
+                        report_error(
                             Component::Ota,
                             ErrorCode::Unknown,
                             Severity::RecoverableError,

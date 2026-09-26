@@ -1,3 +1,6 @@
+//! `ExtensionMode::Sensors`/`LegacySensors` handler. Not yet implemented —
+//! `init` currently just claims its peripherals and does nothing with them.
+
 use embassy_executor::Spawner;
 use esp_hal::gpio::AnyPin;
 use esp_hal::i2c::master::I2c;

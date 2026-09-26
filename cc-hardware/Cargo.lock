@@ -103,6 +103,7 @@ dependencies = [
  "embassy-sync 0.6.2",
  "embassy-time",
  "embedded-can",
+ "embedded-io-async",
  "esp-backtrace",
  "esp-hal",
  "esp-hal-embassy",
@@ -111,6 +112,7 @@ dependencies = [
  "esp-storage",
  "heapless",
  "nb 1.1.0",
+ "noline",
  "num_enum",
  "sequential-storage",
  "static_cell",
@@ -1192,6 +1194,17 @@ name = "nb"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d5439c4ad607c3c23abf66de8c8bf57ba8adcd1f129e699851a6e43935d339d"
+
+[[package]]
+name = "noline"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8100b250810ea78c34882c7bc511ebf9ce8b284ef34486e23f2779b6a7e2e345"
+dependencies = [
+ "embedded-io",
+ "embedded-io-async",
+ "num_enum",
+]
 
 [[package]]
 name = "ntapi"

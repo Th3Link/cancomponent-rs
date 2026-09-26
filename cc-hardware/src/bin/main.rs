@@ -3,8 +3,10 @@
 
 use cancomponents::button::Button;
 use cancomponents::can;
+use cancomponents::cli;
 use cancomponents::config;
 use cancomponents::config::config;
+use cancomponents::console_log;
 use cancomponents::device;
 use cancomponents::echo_guard;
 use cancomponents::extension::Extension;
@@ -21,7 +23,6 @@ use esp_hal::clock::CpuClock;
 use esp_hal::gpio::Pin;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal_embassy::main;
-use esp_println::println;
 
 use core::panic::PanicInfo;
 
@@ -49,16 +50,27 @@ async fn main(spawner: Spawner) -> ! {
     )
     .await;
 
+    // Commissioning console, up regardless of whether device_type/hwrev are
+    // already configured. GPIO3/GPIO1 (ESP32 default UART0 pins) aren't used
+    // by any device-type/hwrev pin mapping below.
+    cli::init(
+        peripherals.UART0,
+        peripherals.GPIO3,
+        peripherals.GPIO1,
+        &spawner,
+    )
+    .await;
+
     let device_type = config()
         .await
         .get_u8(config::Key::DeviceType)
         .await
-        .and_then(|v| DeviceType::try_from(v).ok());
+        .map(DeviceType::from);
 
     let hwrev = config().await.get_u8(config::Key::HardwareRevision).await;
-    println!("device_type: {device_type:?}");
-    println!("hwrev: {hwrev:?}");
-    let _extension_gpios = match (device_type, hwrev) {
+    console_log!("device_type: {device_type:?}");
+    console_log!("hwrev: {hwrev:?}");
+    match (device_type, hwrev) {
         (Some(DeviceType::Relais), Some(2)) => {
             Relais::init(
                 peripherals.I2C0,

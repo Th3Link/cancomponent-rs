@@ -1,6 +1,10 @@
 use num_enum::{FromPrimitive, IntoPrimitive};
 
-#[derive(Copy, Clone, IntoPrimitive, FromPrimitive)]
+/// What the second I2C header / GPIO extension connector is wired up to.
+/// Persisted under `config::Key::ExtensionMode` and only read once at boot
+/// (see `Extension::init` in `cc-hardware`) — changing it takes effect
+/// after a restart.
+#[derive(Copy, Clone, Debug, IntoPrimitive, FromPrimitive)]
 #[repr(u8)]
 pub enum Mode {
     Off = 0,
