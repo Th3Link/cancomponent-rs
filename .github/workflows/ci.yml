@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # cc-core is plain #![no_std]-but-host-testable Rust: fmt, clippy and the
+  # test suite all run on a normal stable toolchain.
+  cc-core:
+    name: cc-core / fmt & clippy
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cc-core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --check
+      - run: cargo clippy -- -D warnings
+
+  cc-core-coverage:
+    name: cc-core / nextest & coverage
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cc-core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest,cargo-llvm-cov
+      - name: Run tests under coverage
+        run: cargo llvm-cov nextest --no-report
+      - name: Generate lcov report
+        run: cargo llvm-cov report --lcov --output-path lcov.info
+      - name: Write coverage summary
+        run: |
+          {
+            echo '### cc-core coverage'
+            echo '```'
+            cargo llvm-cov report --summary-only
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cc-core-coverage
+          path: cc-core/lcov.info
+
+  cc-core-msrv:
+    name: cc-core / MSRV
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cc-core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-msrv
+      - name: Verify declared rust-version actually builds
+        run: cargo msrv verify
+
+  # cc-hardware is the ESP32 firmware; it only ever builds with the custom
+  # "esp" toolchain channel pinned in cc-hardware/rust-toolchain.toml, so it
+  # can't run `cargo test`/`cargo msrv` (no native target, no rustup release
+  # matching that channel). fmt + clippy still apply directly.
+  cc-hardware:
+    name: cc-hardware / fmt & clippy
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cc-hardware
+    steps:
+      - uses: actions/checkout@v4
+      - uses: esp-rs/xtensa-toolchain@v1.7
+        with:
+          buildtargets: esp32
+          version: "1.97.0"
+      - run: cargo fmt --check
+      - run: cargo clippy -- -D warnings

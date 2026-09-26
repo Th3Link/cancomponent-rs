@@ -1,8 +1,13 @@
 [package]
-edition = "2021"
-name    = "cancomponents"
-version = "0.2.0"
-build = "build.rs"
+edition      = "2021"
+name         = "cancomponents"
+version      = "0.3.0"
+build        = "build.rs"
+# Informational only: cc-hardware builds with the pinned "esp" rustup channel
+# (see rust-toolchain.toml), a custom Xtensa fork of nightly, not a stable
+# release. `cargo-msrv` cannot verify this value against that toolchain, so
+# it's kept in sync with cc-core's MSRV by hand.
+rust-version = "1.97"
 
 [[bin]]
 name = "cancomponents"

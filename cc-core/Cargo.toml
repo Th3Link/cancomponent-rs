@@ -1,7 +1,8 @@
 [package]
-edition = "2021"
-name    = "cancomponents-core"
-version = "0.1.0"
+edition      = "2021"
+name         = "cancomponents-core"
+version      = "0.3.0"
+rust-version = "1.97"
 
 [dependencies]
 embedded-can     = { version = "0.4.1"}
