@@ -16,7 +16,7 @@ std = []
 critical-section    = { version = "1.2" }
 esp-hal             = { version = "1.2.2", features = ["esp32", "unstable"] }
 esp-println         = { version = "0.18", features = ["esp32"] }
-esp-backtrace       = { version = "0.20", features = ["esp32","println"] }
+esp-backtrace       = { version = "0.20", features = ["esp32","println","panic-handler"] }
 esp-hal-ota         = { version = "0.6", features = ["esp32"] }
 esp-storage         = { version = "0.10", features = ["esp32", "embedded-storage"] }
 nb                  = { version = "1.1" }
@@ -32,7 +32,7 @@ embedded-storage    = { version = "0.3" }
 static_cell         = { version = "2.1", features = ["nightly"] }
 heapless            = { version = "0.9" }
 async-trait         = { version = "0.1" }
-sequential-storage  = { version = "4.0" }
+sequential-storage  = { version = "8.0" }
 noline              = { version = "0.5" }
 num_enum            = { version = "0.7", default-features = false }
 cancomponents-core  = { path = "../cc-core/" }

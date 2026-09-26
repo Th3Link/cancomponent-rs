@@ -365,13 +365,19 @@ pub async fn can_recieve_task(mut rx: twai::TwaiRx<'static, Async>) {
     }
 }
 
-/// Drains [`CAN_CHANNEL`] and transmits each frame.
+/// Drains [`CAN_CHANNEL`] and transmits each frame. A transmission that
+/// fails (e.g. `TransmissionAborted` when nothing on the bus acknowledges
+/// it) is logged and dropped rather than crashing the device — a
+/// momentarily quiet/disconnected bus shouldn't take a relay controller
+/// down.
 #[embassy_executor::task]
 pub async fn can_send_task(mut tx: twai::TwaiTx<'static, Async>) {
     console_log!("can_send_task started");
     loop {
         let frame = CAN_CHANNEL.receive().await;
-        tx.transmit_async(&frame).await.unwrap();
-        log_frame(&frame);
+        match tx.transmit_async(&frame).await {
+            Ok(()) => log_frame(&frame),
+            Err(e) => console_log!("send error: {e:?}"),
+        }
     }
 }
