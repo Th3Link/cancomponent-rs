@@ -3,6 +3,7 @@ edition      = "2021"
 name         = "cancomponents-core"
 version      = "0.3.0"
 rust-version = "1.97"
+license      = "GPL-3.0-or-later"
 
 [dependencies]
 embedded-can     = { version = "0.4.1"}

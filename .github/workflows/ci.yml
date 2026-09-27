@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
 
 concurrency:
@@ -22,7 +23,7 @@ jobs:
       run:
         working-directory: cc-core
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -36,7 +37,7 @@ jobs:
       run:
         working-directory: cc-core
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
@@ -67,7 +68,7 @@ jobs:
       run:
         working-directory: cc-core
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@v2
         with:
@@ -86,10 +87,67 @@ jobs:
       run:
         working-directory: cc-hardware
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: esp-rs/xtensa-toolchain@v1.7
         with:
           buildtargets: esp32
           version: "1.97.0"
       - run: cargo fmt --check
       - run: cargo clippy -- -D warnings
+
+  # Builds both profiles and archives the flashable firmware as workflow
+  # artifacts. Every push/PR/tag gets a downloadable build; pushing a `v*`
+  # tag additionally publishes the release build as a GitHub Release, see
+  # release.yml.
+  cc-hardware-build:
+    name: cc-hardware / build (${{ matrix.profile }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        profile: [debug, release]
+    defaults:
+      run:
+        working-directory: cc-hardware
+    steps:
+      - uses: actions/checkout@v5
+      - uses: esp-rs/xtensa-toolchain@v1.7
+        with:
+          buildtargets: esp32
+          version: "1.97.0"
+      - name: Install espflash
+        # Needed by build.rs, which shells out to `espflash save-image` to
+        # turn the linked ELF into a flashable raw image (cancomponents.bin).
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -sSL -o /tmp/espflash.zip "https://github.com/esp-rs/espflash/releases/latest/download/espflash-x86_64-unknown-linux-gnu.zip"
+          unzip -o /tmp/espflash.zip -d "$HOME/.local/bin"
+          chmod +x "$HOME/.local/bin/espflash"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: cargo build ${{ matrix.profile == 'release' && '--release' || '' }}
+      - name: Stage artifacts
+        run: |
+          mkdir -p dist
+          cp "target/xtensa-esp32-none-elf/${{ matrix.profile }}/cancomponents" dist/cancomponents.elf
+          cp "target/xtensa-esp32-none-elf/${{ matrix.profile }}/cancomponents.bin" dist/cancomponents.bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cancomponents-${{ matrix.profile }}
+          path: cc-hardware/dist/
+
+  cc-hardware-sbom:
+    name: cc-hardware / SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install cargo-sbom
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -sSL -o "$HOME/.local/bin/cargo-sbom" "https://github.com/psastras/sbom-rs/releases/download/cargo-sbom-latest/cargo-sbom-x86_64-unknown-linux-gnu"
+          chmod +x "$HOME/.local/bin/cargo-sbom"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Generate SPDX SBOM
+        run: cargo-sbom --output-format=spdx_json_2_3 --project-directory cc-hardware > cancomponents.spdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cancomponents-sbom
+          path: cancomponents.spdx.json

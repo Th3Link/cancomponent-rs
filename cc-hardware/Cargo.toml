@@ -8,6 +8,7 @@ build        = "build.rs"
 # release. `cargo-msrv` cannot verify this value against that toolchain, so
 # it's kept in sync with cc-core's MSRV by hand.
 rust-version = "1.97"
+license      = "GPL-3.0-or-later"
 
 [[bin]]
 name = "cancomponents"

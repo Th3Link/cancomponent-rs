@@ -1,0 +1,74 @@
+name: Security audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - .github/workflows/audit.yml
+  pull_request:
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - .github/workflows/audit.yml
+  schedule:
+    # Catch newly published advisories against dependencies that haven't
+    # changed. On this trigger rustsec/audit-check files a GitHub issue per
+    # advisory instead of failing a check.
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cc-core-advisories:
+    name: cc-core / advisories
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          working-directory: cc-core
+
+  cc-hardware-advisories:
+    name: cc-hardware / advisories
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          working-directory: cc-hardware
+
+  # License compliance: this project is GPL-3.0-or-later, so every
+  # dependency's license needs to actually be compatible with that. See
+  # */deny.toml for the allow-list — a new dependency with an unreviewed
+  # license fails this instead of silently being distributed under it.
+  cc-core-licenses:
+    name: cc-core / licenses
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: cc-core/Cargo.toml
+          command-arguments: licenses
+
+  cc-hardware-licenses:
+    name: cc-hardware / licenses
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: cc-hardware/Cargo.toml
+          command-arguments: licenses

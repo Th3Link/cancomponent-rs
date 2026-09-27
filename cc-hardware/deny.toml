@@ -1,0 +1,19 @@
+# cargo-deny config — see https://embarkstudios.github.io/cargo-deny/
+#
+# Only the license check is used here (`cargo deny check licenses`).
+# Vulnerability advisories are already covered by the separate cargo-audit
+# based "Security audit" workflow, so `[advisories]`/`[bans]`/`[sources]`
+# are left at their defaults and unused.
+
+[licenses]
+# Every license actually present in this crate's dependency tree, plus our
+# own GPL-3.0-or-later. A new dependency pulling in something else fails CI
+# until it's reviewed and added here deliberately.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Unicode-3.0",
+    "ISC",
+    "GPL-3.0-or-later",
+]
+confidence-threshold = 0.8
