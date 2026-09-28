@@ -24,6 +24,8 @@ use esp_hal::clock::CpuClock;
 use esp_hal::gpio::Pin;
 use esp_hal::timer::timg::TimerGroup;
 
+esp_bootloader_esp_idf::esp_app_desc!();
+
 #[esp_hal::main]
 async fn main(spawner: Spawner) -> ! {
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::_80MHz));

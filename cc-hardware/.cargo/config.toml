@@ -1,4 +1,5 @@
 [target.xtensa-esp32-none-elf]
+linker = "scripts/esp32-linker.sh"
 runner = "espflash flash --partition-table ./partitions.csv --monitor --chip esp32 --erase-parts otadata"
 
 [env]
