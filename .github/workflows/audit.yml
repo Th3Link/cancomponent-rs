@@ -62,13 +62,22 @@ jobs:
         with:
           manifest-path: cc-core/Cargo.toml
           command-arguments: licenses
-
+  
   cc-hardware-licenses:
     name: cc-hardware / licenses
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: EmbarkStudios/cargo-deny-action@v2
+  
+      # cargo-deny only needs Cargo metadata here. Use the normal stable
+      # toolchain instead of the custom ESP toolchain required to build
+      # the firmware.
+      - uses: dtolnay/rust-toolchain@stable
+  
+      - uses: taiki-e/install-action@v2
         with:
-          manifest-path: cc-hardware/Cargo.toml
-          command-arguments: licenses
+          tool: cargo-deny
+  
+      - name: Check licenses
+        working-directory: cc-hardware
+        run: cargo +stable deny check licenses
