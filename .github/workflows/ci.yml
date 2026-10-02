@@ -56,7 +56,7 @@ jobs:
             cargo llvm-cov report --summary-only
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: cc-core-coverage
           path: cc-core/lcov.info
@@ -129,7 +129,7 @@ jobs:
           mkdir -p dist
           cp "target/xtensa-esp32-none-elf/${{ matrix.profile }}/cancomponents" dist/cancomponents.elf
           cp "target/xtensa-esp32-none-elf/${{ matrix.profile }}/cancomponents.bin" dist/cancomponents.bin
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: cancomponents-${{ matrix.profile }}
           path: cc-hardware/dist/
@@ -147,7 +147,7 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Generate SPDX SBOM
         run: cargo-sbom --output-format=spdx_json_2_3 --project-directory cc-hardware > cancomponents.spdx.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: cancomponents-sbom
           path: cancomponents.spdx.json
